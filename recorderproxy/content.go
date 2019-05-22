@@ -23,16 +23,20 @@ import (
 	"github.com/elazarl/goproxy"
 	"github.com/nlnwa/veidemann-api-go/browsercontroller/v1"
 	"github.com/nlnwa/veidemann-api-go/contentwriter/v1"
-	"github.com/nlnwa/veidemann-api-go/frontier/v1"
-	log "github.com/sirupsen/logrus"
 	"hash"
 	"io"
 	"strings"
 	"time"
 )
 
+const (
+	REQUEST  = "request"
+	RESPONSE = "response"
+)
+
 type wrappedBody struct {
 	io.ReadCloser
+	bodyType          string
 	ctx               *goproxy.ProxyCtx
 	recordContext     *recordContext
 	recNum            int32
@@ -45,11 +49,12 @@ type wrappedBody struct {
 	replacementReader io.Reader
 }
 
-func WrapBody(body io.ReadCloser, ctx *goproxy.ProxyCtx, recNum int32, statusCode int32, contentType string,
-	recordType contentwriter.RecordType, prolog []byte) *wrappedBody {
+func WrapBody(body io.ReadCloser, bodyType string, ctx *goproxy.ProxyCtx, recNum int32, statusCode int32, contentType string,
+	recordType contentwriter.RecordType, prolog []byte) (*wrappedBody, error) {
 
 	b := &wrappedBody{
 		ReadCloser:    body,
+		bodyType:      bodyType,
 		ctx:           ctx,
 		recordContext: ctx.UserData.(*recordContext),
 		recNum:        recNum,
@@ -67,20 +72,21 @@ func WrapBody(body io.ReadCloser, ctx *goproxy.ProxyCtx, recNum int32, statusCod
 
 	b.size = int64(len(prolog))
 	b.blockCrc.Write(prolog)
-	err2 := b.sendProtocolHeader(prolog)
-	if err2 != nil {
-		log.Fatalf("Error writing payload to content writer: %v", err2)
+	err := b.sendProtocolHeader(prolog)
+	if err != nil {
+		return nil, fmt.Errorf("error writing payload to content writer: %v", err)
 	}
 
-	return b
+	return b, nil
 }
 
 func (b *wrappedBody) Read(p []byte) (n int, err error) {
 	if b.recordType != contentwriter.RecordType_RESPONSE || b.recordContext.replacementScript == nil {
+		// Send original content to client
 		return b.innerRead(b.ReadCloser, p)
 	} else {
+		// Replace content sent to client while still storing original content
 		if b.replacementReader == nil {
-			fmt.Printf("======\n")
 			for {
 				_, err := b.innerRead(b.ReadCloser, p)
 				if err == io.EOF {
@@ -93,30 +99,32 @@ func (b *wrappedBody) Read(p []byte) (n int, err error) {
 			b.replacementReader = bytes.NewReader([]byte(b.recordContext.replacementScript.Script))
 		}
 		n, err = b.replacementReader.Read(p)
-		fmt.Printf("N: %v, ERR: %v, P: %s\n", n, err, p[:n])
 		return
 	}
 }
 
 func (b *wrappedBody) innerRead(r io.Reader, p []byte) (n int, err error) {
 	n, err = r.Read(p)
-	//fmt.Printf("inner N: %v, ERR: %v, P: %s\n", n, err, p[:n])
 	if n > 0 {
 		if b.bodyCrc == nil {
 			b.bodyCrc = sha1.New()
 		}
-		b.notifyBc(browsercontroller.NotifyActivity_DATA_RECEIVED)
+		if b.bodyType == RESPONSE {
+			b.notifyBc(browsercontroller.NotifyActivity_DATA_RECEIVED)
+		}
 
 		b.size += int64(n)
 		d := p[:n]
 		b.blockCrc.Write(d)
 		b.bodyCrc.Write(d)
 		err2 := b.sendPayload(d)
-		b.handleErr("Error writing payload to content writer", err2)
+		b.recordContext.handleErr("Error writing payload to content writer", err2)
 	}
 	if err == io.EOF {
-		fetchDurationMs := time.Now().Sub(b.recordContext.FetchTimesTamp).Nanoseconds() / 1000
-		b.notifyBc(browsercontroller.NotifyActivity_ALL_DATA_RECEIVED)
+		fetchDurationMs := time.Now().Sub(b.recordContext.FetchTimesTamp).Nanoseconds() / 1000000
+		if b.bodyType == RESPONSE {
+			b.notifyBc(browsercontroller.NotifyActivity_ALL_DATA_RECEIVED)
+		}
 
 		var payloadDigest string
 		blockDigest := fmt.Sprintf("sha1:%x", b.blockCrc.Sum(nil))
@@ -127,15 +135,10 @@ func (b *wrappedBody) innerRead(r io.Reader, p []byte) (n int, err error) {
 		b.recordMeta.PayloadDigest = payloadDigest
 		b.recordMeta.BlockDigest = blockDigest
 
-		switch b.recordType {
-		case contentwriter.RecordType_RESPONSE:
-			fallthrough
-		case contentwriter.RecordType_REVISIT:
-			fallthrough
-		case contentwriter.RecordType_RESOURCE:
+		if b.bodyType == RESPONSE {
 			cwReply, err2 := b.sendMeta()
 			if err2 != nil {
-				b.handleErr("Error writing payload to content writer", err2)
+				b.recordContext.handleErr("Error writing metadata to content writer", err2)
 			}
 
 			cl := b.recordContext.crawlLog
@@ -150,7 +153,7 @@ func (b *wrappedBody) innerRead(r io.Reader, p []byte) (n int, err error) {
 			cl.RecordType = strings.ToLower(cwReply.Meta.RecordMeta[b.recNum].Type.String())
 			cl.BlockDigest = blockDigest
 			cl.PayloadDigest = payloadDigest
-			b.saveCrawlLog(cl)
+			b.recordContext.saveCrawlLog(cl)
 
 			b.recordContext.Close()
 		}
@@ -166,18 +169,7 @@ func (b *wrappedBody) notifyBc(activity browsercontroller.NotifyActivity_Activit
 			},
 		},
 	})
-	b.handleErr("Error notifying browser controller", err)
-}
-
-func (b *wrappedBody) saveCrawlLog(crawlLog *frontier.CrawlLog) {
-	err := b.recordContext.bcc.Send(&browsercontroller.DoRequest{
-		Action: &browsercontroller.DoRequest_Completed{
-			Completed: &browsercontroller.Completed{
-				CrawlLog: crawlLog,
-			},
-		},
-	})
-	b.handleErr("Error sending crawl log to browser controller", err)
+	b.recordContext.handleErr("Error notifying browser controller", err)
 }
 
 func (b *wrappedBody) sendProtocolHeader(p []byte) error {
@@ -212,24 +204,15 @@ func (b *wrappedBody) sendMeta() (reply *contentwriter.WriteReply, err error) {
 	}
 
 	err = b.recordContext.cwc.Send(metaRequest)
-	if b.handleErr("Error writing meta record to content writer", err) {
+	if b.recordContext.handleErr("Error writing meta record to content writer", err) {
 		return nil, err
 	}
 
 	reply, err = b.recordContext.cwc.CloseAndRecv()
-	if b.handleErr("Error closing content writer", err) {
+	if b.recordContext.handleErr("Error closing content writer", err) {
 		return nil, err
 	}
 
 	return
 
-}
-
-func (b *wrappedBody) handleErr(msg string, err error) bool {
-	if err != nil {
-		log.Warnf("%s, cause: %v", msg, err)
-		b.recordContext.SendError(-5, msg, err.Error())
-		return true
-	}
-	return false
 }

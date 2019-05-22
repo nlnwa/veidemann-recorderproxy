@@ -27,7 +27,7 @@ import (
 )
 
 type Connections interface {
-	Connect(contentWriterAddr string, dnsResolverAddr string, browserControllerAddr string, opts ...grpc.DialOption) error
+	Connect(contentWriterAddr string, dnsResolverAddr string, browserControllerAddr string, connectionTimeout time.Duration, opts ...grpc.DialOption) error
 	Close()
 	ContentWriterClient() contentwriterV1.ContentWriterClient
 	DnsResolverClient() dnsresolverV1.DnsResolverClient
@@ -48,10 +48,12 @@ func NewConnections() *connections {
 	return &connections{}
 }
 
-func (c *connections) Connect(contentWriterAddr string, dnsResolverAddr string, browserControllerAddr string, opts ...grpc.DialOption) error {
+func (c *connections) Connect(contentWriterAddr string, dnsResolverAddr string, browserControllerAddr string, connectTimeout time.Duration, opts ...grpc.DialOption) error {
+	log.Printf("Proxy is using contentwriter at: %s, dns resolver at: %s and browser controller at: %s", contentWriterAddr, dnsResolverAddr, browserControllerAddr)
+
 	opts = append(opts, grpc.WithInsecure(), grpc.WithBlock())
 
-	dialCtx, dialCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	dialCtx, dialCancel := context.WithTimeout(context.Background(), connectTimeout)
 	defer dialCancel()
 
 	// Set up ContentWriterClient
@@ -63,7 +65,7 @@ func (c *connections) Connect(contentWriterAddr string, dnsResolverAddr string, 
 	c.contentWriterClientConn = clientConn
 	c.contentWriterClient = contentwriterV1.NewContentWriterClient(clientConn)
 
-	log.Printf("Proxy is using contentwriter at: %s", contentWriterAddr)
+	log.Printf("Connected to contentwriter")
 
 	// Set up DnsResolverClient
 	clientConn, err = grpc.DialContext(dialCtx, dnsResolverAddr, opts...)
@@ -74,7 +76,7 @@ func (c *connections) Connect(contentWriterAddr string, dnsResolverAddr string, 
 	c.dnsResolverClientConn = clientConn
 	c.dnsResolverClient = dnsresolverV1.NewDnsResolverClient(clientConn)
 
-	log.Printf("Proxy is using dns resolver at: %s", dnsResolverAddr)
+	log.Printf("Connected to dns resolver")
 
 	// Set up BrowserControllerClient
 	clientConn, err = grpc.DialContext(dialCtx, browserControllerAddr, opts...)
@@ -85,7 +87,7 @@ func (c *connections) Connect(contentWriterAddr string, dnsResolverAddr string, 
 	c.browserControllerClientConn = clientConn
 	c.browserControllerClient = browsercontrollerV1.NewBrowserControllerClient(clientConn)
 
-	log.Printf("Proxy is using browser controller at: %s", browserControllerAddr)
+	log.Printf("Connected to browser controller")
 
 	return nil
 }

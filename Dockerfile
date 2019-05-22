@@ -10,5 +10,13 @@ RUN go install -v ./...
 FROM gcr.io/distroless/base
 COPY --from=build /go/bin/veidemann-recorderproxy /
 EXPOSE 8080
-ENV HTTP_PROXY=localhost:9999
-CMD ["/veidemann-recorderproxy", "-v"]
+ENV HTTP_PROXY=localhost:9999 \
+    PORT=9900 \
+    PROXY_COUNT=10 \
+    DNS_RESOLVER=localhost:7777 \
+    CONTENT_WRITER=localhost:7778 \
+    BROWSER_CONTROLLER=localhost:7779 \
+    CA=ca-certificates/cache-selfsignedCA.crt \
+    CA_KEY=ca-certificates/cache-selfsigned.key \
+
+CMD ["/veidemann-recorderproxy"]
