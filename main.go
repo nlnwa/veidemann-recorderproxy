@@ -20,8 +20,8 @@ func main() {
 	flag.String("dns-resolver", "localhost:7778", "DNS resolver address (host:port)")
 	flag.String("browser-controller", "localhost:7779", "Browser controller address (host:port)")
 	flag.Duration("timeout", 10*time.Minute, "Timeout used for connecting to GRPC services")
-	flag.String("ca", "", "CA certificate used for signing client connections")
-	flag.String("ca-key", "", "Private key for CA certificate used for signing client connections")
+	flag.String("ca", "", "Path to CA certificate used for signing client connections")
+	flag.String("ca-key", "", "Path to private key for CA certificate used for signing client connections")
 	flag.Parse()
 
 	replacer := strings.NewReplacer("-", "_")

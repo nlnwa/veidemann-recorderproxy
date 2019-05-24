@@ -86,6 +86,8 @@ func init() {
 	httpsMux.Handle("/replace", ConstantHandler("should be replaced"))
 	httpMux.Handle("/slow", ConstantSlowHandler("content from http server"))
 	httpsMux.Handle("/slow", ConstantSlowHandler("content from https server"))
+	httpMux.Handle("/cancel", ConstantSlowHandler("content from http server"))
+	httpsMux.Handle("/cancel", ConstantSlowHandler("content from https server"))
 
 	lis = bufconn.Listen(bufSize)
 	s := grpc.NewServer()
@@ -242,6 +244,20 @@ func TestGoproxyThroughProxy(t *testing.T) {
 			wantErr:     false,
 			grpcTimeout: 10 * time.Millisecond,
 		},
+		{
+			name:        "http:browser controller cancel",
+			url:         srvHttp.URL + "/cancel",
+			wantStatus:  200,
+			wantContent: "content from http server",
+			wantErr:     false,
+		},
+		{
+			name:        "https:browser controller cancel",
+			url:         srvHttps.URL + "/cancel",
+			wantStatus:  200,
+			wantContent: "content from https server",
+			wantErr:     false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -304,6 +320,8 @@ func (test *test) generateExpectedRequests() {
 		test.generateServerTimeoutRequests(u, p)
 	case strings.HasSuffix(n, ":grpc service timeout"):
 		test.generateGrpcServiceTimeoutRequests(u, p)
+	case strings.HasSuffix(n, ":browser controller cancel"):
+		test.generateBrowserControllerCancelRequests(u, p)
 	default:
 		test.generateSuccessRequests(u, p)
 	}
@@ -524,6 +542,48 @@ func (test *test) generateGrpcServiceTimeoutRequests(u *url.URL, p int) {
 	test.wantGrpcRequests = r
 }
 
+func (test *test) generateBrowserControllerCancelRequests(u *url.URL, p int) {
+	r := &requests{}
+	r.DnsResolverRequests = []*dnsresolverV1.ResolveRequest{
+		{Host: u.Hostname(), Port: int32(p), CollectionRef: &configV1.ConfigRef{Kind: configV1.Kind_collection, Id: "col1"}},
+	}
+
+	r.BrowserControllerRequests = []*browsercontrollerV1.DoRequest{
+		{
+			Action: &browsercontrollerV1.DoRequest_New{New: &browsercontrollerV1.RegisterNew{Uri: test.url}},
+		},
+		{
+			Action: &browsercontrollerV1.DoRequest_Completed{
+				Completed: &browsercontrollerV1.Completed{
+					CrawlLog: &frontier.CrawlLog{
+						StatusCode:     -5011,
+						RequestedUri:   test.url,
+						RecordType:     "response",
+						IpAddress:      "1.2.1.2",
+						ExecutionId:    "eid",
+						JobExecutionId: "jid",
+						Error: &commons.Error{
+							Code:   -5011,
+							Msg:    "CANCELED_BY_BROWSER",
+							Detail: "cancelled by browser controller",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	r.ContentWriterRequests = []*contentwriterV1.WriteRequest{
+		{
+			Value: &contentwriterV1.WriteRequest_Cancel{
+				Cancel: "cancelled by browser controller",
+			},
+		},
+	}
+
+	test.wantGrpcRequests = r
+}
+
 func compareCW(t *testing.T, serviceName string, tt test, want []*contentwriterV1.WriteRequest, got []*contentwriterV1.WriteRequest) {
 	// If last request is a cancel request, then we don't care about the others
 	lastWant := want[len(want)-1].Value
@@ -531,6 +591,9 @@ func compareCW(t *testing.T, serviceName string, tt test, want []*contentwriterV
 		lastGot := got[len(got)-1].Value
 		if requestsEqual(lastGot, lastWant) {
 			return
+		} else {
+			t.Errorf("%s service got wrong cancel request.  %s request #%d\nWas:\n%v\nWant:\n%v", serviceName, serviceName,
+				len(got), printRequest(lastGot), printRequest(lastWant))
 		}
 	}
 
@@ -659,7 +722,7 @@ func compareBcDoRequest(t *testing.T, tt test, want *browsercontrollerV1.DoReque
 	switch gt := got.Action.(type) {
 	case *browsercontrollerV1.DoRequest_Completed:
 		ok = false
-		allowedTimeDiff := time.Duration(gt.Completed.GetCrawlLog().FetchTimeMs+300) * time.Millisecond
+		allowedTimeDiff := time.Duration(gt.Completed.GetCrawlLog().FetchTimeMs+1500) * time.Millisecond
 		if checkTimePb(t, gt.Completed.GetCrawlLog().FetchTimeStamp, allowedTimeDiff) {
 			gt.Completed.GetCrawlLog().FetchTimeStamp = nil
 
@@ -894,6 +957,17 @@ func (s *GrpcServiceMock) Do(server browsercontrollerV1.BrowserController_DoServ
 				}
 			}
 			_ = server.Send(reply)
+
+			if strings.HasSuffix(v.New.Uri, "cancel") {
+				go func() {
+					time.Sleep(100 * time.Millisecond)
+					_ = server.Send(&browsercontrollerV1.DoReply{
+						Action: &browsercontrollerV1.DoReply_Cancel{
+							Cancel: "Cancelled by browser controller",
+						},
+					})
+				}()
+			}
 		case *browsercontrollerV1.DoRequest_Notify:
 		case *browsercontrollerV1.DoRequest_Completed:
 		default:

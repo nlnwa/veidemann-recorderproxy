@@ -141,19 +141,21 @@ func (b *wrappedBody) innerRead(r io.Reader, p []byte) (n int, err error) {
 				b.recordContext.handleErr("Error writing metadata to content writer", err2)
 			}
 
-			cl := b.recordContext.crawlLog
-			cl.FetchTimeMs = fetchDurationMs
-			cl.StatusCode = b.statusCode
-			cl.CollectionFinalName = cwReply.Meta.RecordMeta[b.recNum].CollectionFinalName
-			cl.WarcId = cwReply.Meta.RecordMeta[b.recNum].WarcId
-			cl.StorageRef = cwReply.Meta.RecordMeta[b.recNum].StorageRef
-			cl.WarcRefersTo = cwReply.Meta.RecordMeta[b.recNum].RevisitReferenceId
-			cl.Size = b.size
-			cl.ContentType = b.recordMeta.RecordContentType
-			cl.RecordType = strings.ToLower(cwReply.Meta.RecordMeta[b.recNum].Type.String())
-			cl.BlockDigest = blockDigest
-			cl.PayloadDigest = payloadDigest
-			b.recordContext.saveCrawlLog(cl)
+			if !b.recordContext.closed {
+				cl := b.recordContext.crawlLog
+				cl.FetchTimeMs = fetchDurationMs
+				cl.StatusCode = b.statusCode
+				cl.CollectionFinalName = cwReply.Meta.RecordMeta[b.recNum].CollectionFinalName
+				cl.WarcId = cwReply.Meta.RecordMeta[b.recNum].WarcId
+				cl.StorageRef = cwReply.Meta.RecordMeta[b.recNum].StorageRef
+				cl.WarcRefersTo = cwReply.Meta.RecordMeta[b.recNum].RevisitReferenceId
+				cl.Size = b.size
+				cl.ContentType = b.recordMeta.RecordContentType
+				cl.RecordType = strings.ToLower(cwReply.Meta.RecordMeta[b.recNum].Type.String())
+				cl.BlockDigest = blockDigest
+				cl.PayloadDigest = payloadDigest
+				b.recordContext.saveCrawlLog(cl)
+			}
 
 			b.recordContext.Close()
 		}
@@ -162,6 +164,9 @@ func (b *wrappedBody) innerRead(r io.Reader, p []byte) (n int, err error) {
 }
 
 func (b *wrappedBody) notifyBc(activity browsercontroller.NotifyActivity_Activity) {
+	if b.recordContext.closed {
+		return
+	}
 	err := b.recordContext.bcc.Send(&browsercontroller.DoRequest{
 		Action: &browsercontroller.DoRequest_Notify{
 			Notify: &browsercontroller.NotifyActivity{
@@ -173,6 +178,9 @@ func (b *wrappedBody) notifyBc(activity browsercontroller.NotifyActivity_Activit
 }
 
 func (b *wrappedBody) sendProtocolHeader(p []byte) error {
+	if b.recordContext.closed {
+		return nil
+	}
 	payloadRequest := &contentwriter.WriteRequest{
 		Value: &contentwriter.WriteRequest_ProtocolHeader{
 			ProtocolHeader: &contentwriter.Data{
@@ -186,6 +194,9 @@ func (b *wrappedBody) sendProtocolHeader(p []byte) error {
 }
 
 func (b *wrappedBody) sendPayload(p []byte) error {
+	if b.recordContext.closed {
+		return nil
+	}
 	payloadRequest := &contentwriter.WriteRequest{
 		Value: &contentwriter.WriteRequest_Payload{
 			Payload: &contentwriter.Data{
@@ -199,6 +210,9 @@ func (b *wrappedBody) sendPayload(p []byte) error {
 }
 
 func (b *wrappedBody) sendMeta() (reply *contentwriter.WriteReply, err error) {
+	if b.recordContext.closed {
+		return
+	}
 	metaRequest := &contentwriter.WriteRequest{
 		Value: b.recordContext.meta,
 	}

@@ -12,7 +12,7 @@ require (
 	golang.org/x/net v0.0.0-20190311183353-d8887717615a
 	google.golang.org/appengine v1.4.0 // indirect
 	google.golang.org/genproto v0.0.0-20190502173448-54afdca5d873 // indirect
-	google.golang.org/grpc v1.20.1
+	google.golang.org/grpc v1.21.0
 )
 
 replace github.com/elazarl/goproxy => ../../../github.com/elazarl/goproxy

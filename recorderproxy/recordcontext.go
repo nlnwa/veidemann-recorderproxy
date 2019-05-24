@@ -48,6 +48,7 @@ type recordContext struct {
 	replacementScript *config.BrowserScript
 	pubsubChan        chan interface{}
 	pubsub            broadcast.Broadcaster
+	closed            bool
 }
 
 func NewRecordContext(proxy *RecorderProxy, session int64) *recordContext {
@@ -64,18 +65,6 @@ func NewRecordContext(proxy *RecorderProxy, session int64) *recordContext {
 		log.Fatalf("Error connecting to browser controller, cause: %v", err)
 		return nil
 	}
-	msgc := make(chan *browsercontroller.DoReply)
-	go func() {
-		for {
-			doReply, err := bcc.Recv()
-			if err == io.EOF {
-				// read done.
-				close(msgc)
-				return
-			}
-			msgc <- doReply
-		}
-	}()
 
 	rCtx := &recordContext{
 		session:    session,
@@ -83,10 +72,32 @@ func NewRecordContext(proxy *RecorderProxy, session int64) *recordContext {
 		cancel:     cancel,
 		cwc:        cwc,
 		bcc:        bcc,
-		bccMsgChan: msgc,
+		bccMsgChan: make(chan *browsercontroller.DoReply),
 		pubsubChan: make(chan interface{}),
 		pubsub:     proxy.pubsub,
 	}
+
+	// Handle messages from browser controller
+	go func() {
+		for {
+			doReply, err := bcc.Recv()
+			if err == io.EOF {
+				// read done.
+				close(rCtx.bccMsgChan)
+				return
+			}
+			switch doReply.Action.(type) {
+			case *browsercontroller.DoReply_Cancel:
+				rCtx.SendError(&commons.Error{
+					Code:   -5011,
+					Msg:    "CANCELED_BY_BROWSER",
+					Detail: "cancelled by browser controller",
+				})
+			default:
+				rCtx.bccMsgChan <- doReply
+			}
+		}
+	}()
 
 	rCtx.pubsub.Register(rCtx.pubsubChan)
 
@@ -112,6 +123,9 @@ func NewRecordContext(proxy *RecorderProxy, session int64) *recordContext {
 }
 
 func (r *recordContext) saveCrawlLog(crawlLog *frontier.CrawlLog) {
+	if r.closed {
+		return
+	}
 	err := r.bcc.Send(&browsercontroller.DoRequest{
 		Action: &browsercontroller.DoRequest_Completed{
 			Completed: &browsercontroller.Completed{
@@ -136,19 +150,22 @@ func (r *recordContext) SendErrorCode(code int32, msg string, detail string) {
 }
 
 func (r *recordContext) SendError(err *commons.Error) {
-	defer r.cwc.CloseSend()
-	defer r.bcc.CloseSend()
-	cl := r.crawlLog
-	if cl.FetchTimeMs == 0 {
-		cl.FetchTimeMs = time.Now().Sub(r.FetchTimesTamp).Nanoseconds() / 1000000
+	if r.closed {
+		return
 	}
-	cl.StatusCode = err.Code
-	if cl.RecordType == "" {
-		cl.RecordType = strings.ToLower("response")
+	defer r.Close()
+	if r.crawlLog != nil {
+		cl := r.crawlLog
+		if cl.FetchTimeMs == 0 {
+			cl.FetchTimeMs = time.Now().Sub(r.FetchTimesTamp).Nanoseconds() / 1000000
+		}
+		cl.StatusCode = err.Code
+		if cl.RecordType == "" {
+			cl.RecordType = strings.ToLower("response")
+		}
+		cl.Error = err
+		r.saveCrawlLog(cl)
 	}
-	cl.Error = err
-	r.saveCrawlLog(cl)
-
 	e := r.cwc.Send(&contentwriter.WriteRequest{Value: &contentwriter.WriteRequest_Cancel{Cancel: err.Detail}})
 	if e != nil {
 		log.Errorf("Could not write error to browser controller: %v.\nError was: %v", e, err)
@@ -165,10 +182,10 @@ func (r *recordContext) handleErr(msg string, err error) bool {
 }
 
 func (r *recordContext) Close() {
+	r.closed = true
+	defer r.bcc.CloseSend()
+	defer r.cwc.CloseSend()
 	r.pubsub.Unregister(r.pubsubChan)
-	r.bcc.CloseSend()
-	<-r.bccMsgChan
-	r.cwc.CloseSend()
 	if r.cancel != nil {
 		r.cancel()
 	}
