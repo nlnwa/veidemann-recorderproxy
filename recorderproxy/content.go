@@ -32,6 +32,7 @@ import (
 const (
 	REQUEST  = "request"
 	RESPONSE = "response"
+	CRLF     = "\r\n"
 )
 
 type wrappedBody struct {
@@ -72,9 +73,12 @@ func WrapBody(body io.ReadCloser, bodyType string, ctx *goproxy.ProxyCtx, recNum
 
 	b.size = int64(len(prolog))
 	b.blockCrc.Write(prolog)
-	err := b.sendProtocolHeader(prolog)
-	if err != nil {
-		return nil, fmt.Errorf("error writing payload to content writer: %v", err)
+
+	if !b.recordContext.foundInCache {
+		err := b.sendProtocolHeader(prolog)
+		if err != nil {
+			return nil, fmt.Errorf("error writing payload to content writer: %v", err)
+		}
 	}
 
 	return b, nil
@@ -106,22 +110,44 @@ func (b *wrappedBody) Read(p []byte) (n int, err error) {
 func (b *wrappedBody) innerRead(r io.Reader, p []byte) (n int, err error) {
 	n, err = r.Read(p)
 	if n > 0 {
-		if b.bodyCrc == nil {
-			b.bodyCrc = sha1.New()
-		}
-		if b.bodyType == RESPONSE {
-			b.notifyBc(browsercontroller.NotifyActivity_DATA_RECEIVED)
-		}
+		if !b.recordContext.foundInCache {
+			if b.bodyCrc == nil {
+				b.bodyCrc = sha1.New()
+				b.size += 2 // Add size for header and payload separator (\r\n)
+				b.blockCrc.Write([]byte(CRLF))
+			}
+			if b.bodyType == RESPONSE {
+				b.notifyBc(browsercontroller.NotifyActivity_DATA_RECEIVED)
+			}
 
-		b.size += int64(n)
-		d := p[:n]
-		b.blockCrc.Write(d)
-		b.bodyCrc.Write(d)
-		err2 := b.sendPayload(d)
-		b.recordContext.handleErr("Error writing payload to content writer", err2)
+			b.size += int64(n)
+			d := p[:n]
+			b.blockCrc.Write(d)
+			b.bodyCrc.Write(d)
+			err2 := b.sendPayload(d)
+			b.recordContext.handleErr("Error writing payload to content writer", err2)
+		}
 	}
 	if err == io.EOF {
 		fetchDurationMs := time.Now().Sub(b.recordContext.FetchTimesTamp).Nanoseconds() / 1000000
+
+		if b.recordContext.foundInCache {
+			if !b.recordContext.closed {
+				cl := b.recordContext.crawlLog
+				cl.FetchTimeMs = fetchDurationMs
+				cl.StatusCode = b.statusCode
+				cl.Size = b.size
+				cl.ContentType = b.recordMeta.RecordContentType
+				b.recordContext.saveCrawlLog(cl)
+			}
+			ee := b.recordContext.cwc.Send(&contentwriter.WriteRequest{Value: &contentwriter.WriteRequest_Cancel{Cancel: "OK: Loaded from cache"}})
+			if ee != nil {
+				fmt.Println("Could not cancel", ee)
+			}
+			b.recordContext.Close()
+			return
+		}
+
 		if b.bodyType == RESPONSE {
 			b.notifyBc(browsercontroller.NotifyActivity_ALL_DATA_RECEIVED)
 		}
@@ -138,7 +164,9 @@ func (b *wrappedBody) innerRead(r io.Reader, p []byte) (n int, err error) {
 		if b.bodyType == RESPONSE {
 			cwReply, err2 := b.sendMeta()
 			if err2 != nil {
-				b.recordContext.handleErr("Error writing metadata to content writer", err2)
+				b.recordContext.SendErrorCode(-5, "Error writing to content writer", err2.Error())
+				b.recordContext.Close()
+				return
 			}
 
 			if !b.recordContext.closed {
@@ -158,6 +186,9 @@ func (b *wrappedBody) innerRead(r io.Reader, p []byte) (n int, err error) {
 			}
 
 			b.recordContext.Close()
+			if b.recordContext.cancel != nil {
+				b.recordContext.cancel()
+			}
 		}
 	}
 	return
@@ -218,14 +249,11 @@ func (b *wrappedBody) sendMeta() (reply *contentwriter.WriteReply, err error) {
 	}
 
 	err = b.recordContext.cwc.Send(metaRequest)
-	if b.recordContext.handleErr("Error writing meta record to content writer", err) {
+	if err != nil {
 		return nil, err
 	}
 
 	reply, err = b.recordContext.cwc.CloseAndRecv()
-	if b.recordContext.handleErr("Error closing content writer", err) {
-		return nil, err
-	}
 
 	return
 

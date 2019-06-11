@@ -13,15 +13,16 @@ import (
 )
 
 func main() {
-	verbose := flag.Bool("v", false, "should every proxy request be logged to stdout")
+	verbose := flag.BoolP("verbose", "v", false, "should every proxy request be logged to stdout")
 	flag.Int("port", 8080, "first proxy listen port")
-	flag.Int("proxy-count", 8080, "number of proxies to start")
+	flag.Int("proxy-count", 10, "number of proxies to start")
 	flag.String("content-writer", "localhost:7777", "Content writer address (host:port)")
 	flag.String("dns-resolver", "localhost:7778", "DNS resolver address (host:port)")
 	flag.String("browser-controller", "localhost:7779", "Browser controller address (host:port)")
 	flag.Duration("timeout", 10*time.Minute, "Timeout used for connecting to GRPC services")
 	flag.String("ca", "", "Path to CA certificate used for signing client connections")
 	flag.String("ca-key", "", "Path to private key for CA certificate used for signing client connections")
+	flag.String("cache", "", "Cache address (host:port)")
 	flag.Parse()
 
 	replacer := strings.NewReplacer("-", "_")
@@ -41,6 +42,8 @@ func main() {
 		log.Fatalf("Could not connect to services: %v", err)
 	}
 
+	fmt.Printf("Using cache at %s\n", viper.GetString("cache"))
+
 	firstPort := viper.GetInt("port")
 	proxyCount := viper.GetInt("proxy-count")
 	for i := firstPort; i < (firstPort + proxyCount); i++ {
@@ -49,6 +52,7 @@ func main() {
 		r.Start()
 	}
 
+	fmt.Printf("Veidemann recorder proxy started\n")
 	fmt.Printf("Verbose: %t\n", *verbose)
 
 	c := make(chan os.Signal, 1)

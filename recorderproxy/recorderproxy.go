@@ -17,6 +17,7 @@
 package recorderproxy
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"fmt"
@@ -25,15 +26,20 @@ import (
 	"github.com/golang/protobuf/ptypes"
 	"github.com/nlnwa/veidemann-api-go/browsercontroller/v1"
 	"github.com/nlnwa/veidemann-api-go/commons/v1"
+	"github.com/nlnwa/veidemann-api-go/config/v1"
 	"github.com/nlnwa/veidemann-api-go/contentwriter/v1"
 	"github.com/nlnwa/veidemann-api-go/dnsresolver/v1"
 	"github.com/nlnwa/veidemann-api-go/frontier/v1"
 	log "github.com/sirupsen/logrus"
+	"github.com/spf13/viper"
 	"io"
 	"io/ioutil"
 	"net"
 	"net/http"
+	"net/url"
+	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -41,6 +47,7 @@ const (
 	ENCODING         = "Accept-Encoding"
 	EXECUTION_ID     = "veidemann_eid"
 	JOB_EXECUTION_ID = "veidemann_jeid"
+	COLLECTION_ID    = "veidemann_cid"
 )
 
 var proxyCount int32
@@ -54,7 +61,21 @@ type RecorderProxy struct {
 	pubsub            broadcast.Broadcaster
 }
 
+type MyRw struct {
+	http.ResponseWriter
+}
+
+func (m *MyRw) Write(w []byte) (int, error) {
+	fmt.Println("WRITE")
+	return m.ResponseWriter.Write(w)
+}
+
+func (m *MyRw) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	return m.ResponseWriter.(http.Hijacker).Hijack()
+}
+
 func (r *RecorderProxy) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	w = &MyRw{w}
 	r.proxy.ServeHTTP(w, req)
 }
 
@@ -70,6 +91,13 @@ func NewRecorderProxy(port int, conn Connections, connectionTimeout time.Duratio
 
 	r.proxy.Logger = &LogStealer{Logger: r.proxy.Logger, pubsub: r.pubsub}
 
+	cache := viper.GetString("cache")
+	if cache != "" {
+		cu, _ := url.Parse("http://" + cache)
+		r.proxy.Tr.Proxy = http.ProxyURL(cu)
+		r.proxy.ConnectDial = r.proxy.NewConnectDialToProxy(cache)
+	}
+
 	r.proxy.OnRequest().HandleConnect(goproxy.AlwaysMitm)
 
 	r.proxy.OnRequest().Do(r.RecordRequest())
@@ -84,7 +112,7 @@ func (r *RecorderProxy) Start() {
 	fmt.Printf("Starting proxy %v...\n", r.id)
 
 	go func() {
-		log.Fatalf("Proxy with addr %v: %v", r.addr, http.ListenAndServe(r.addr, r.proxy))
+		log.Fatalf("Proxy with addr %v: %v", r.addr, http.ListenAndServe(r.addr, r))
 	}()
 
 	fmt.Printf("Proxy %v started on port %v\n", r.id, r.addr)
@@ -96,39 +124,65 @@ func (r *RecorderProxy) SetVerbose(v bool) {
 
 func (r *RecorderProxy) RecordRequest() goproxy.ReqHandler {
 	return goproxy.FuncReqHandler(func(req *http.Request, ctx *goproxy.ProxyCtx) (*http.Request, *http.Response) {
+		fmt.Println("###", r.id, r.addr, req.URL)
+		fmt.Printf("Got request on proxy #%v, port %v for uri %s\n", r.id, r.addr, req.URL)
+		os.Stdout.Sync()
 		ctx.RoundTripper = &RoundTripper{r.proxy.Tr.RoundTrip}
 		var prolog bytes.Buffer
 		writeRequestProlog(req, &prolog)
 
 		rCtx := NewRecordContext(r, ctx.Session)
 
-		err := rCtx.bcc.Send(&browsercontroller.DoRequest{
+		var collectionRef *config.ConfigRef
+
+		executionId := req.Header.Get(EXECUTION_ID)
+		jobExecutionId := req.Header.Get(JOB_EXECUTION_ID)
+
+		if req.Header.Get(COLLECTION_ID) != "" {
+			collectionRef = &config.ConfigRef{
+				Kind: config.Kind_collection,
+				Id:   req.Header.Get(COLLECTION_ID),
+			}
+		}
+
+		bccRequest := &browsercontroller.DoRequest{
 			Action: &browsercontroller.DoRequest_New{
 				New: &browsercontroller.RegisterNew{
-					ProxyId: r.id,
-					Uri:     req.URL.String(),
+					ProxyId:          r.id,
+					Uri:              req.URL.String(),
+					CrawlExecutionId: executionId,
+					JobExecutionId:   jobExecutionId,
+					CollectionRef:    collectionRef,
 				},
 			},
-		})
+		}
+
+		err := rCtx.bcc.Send(bccRequest)
 		if err != nil {
 			log.Fatalf("Error register with browser controller, cause: %v", err)
 		}
 
 		bcReply := <-rCtx.bccMsgChan
+		switch bcReply.Action.(type) {
+		case *browsercontroller.DoReply_Cancel:
+			return req, NewResponse(req, goproxy.ContentTypeText, 403, "Blocked by robots.txt")
+		}
 
-		executionId := bcReply.GetNew().CrawlExecutionId
-		jobExecutionId := bcReply.GetNew().GetJobExecutionId()
-		collectionRef := bcReply.GetNew().CollectionRef
+		executionId = bcReply.GetNew().CrawlExecutionId
+		jobExecutionId = bcReply.GetNew().GetJobExecutionId()
+		collectionRef = bcReply.GetNew().CollectionRef
 		rCtx.replacementScript = bcReply.GetNew().ReplacementScript
+
 		uri := req.URL
 
-		host, ps, err := net.SplitHostPort(uri.Host)
-		if err != nil {
-			log.Fatalf("Error looking up %v, cause: %v", uri.Host, err)
-		}
-		port, err := strconv.Atoi(ps)
-		if err != nil {
-			log.Fatalf("Error looking up %v, cause: %v", uri.Host, err)
+		host := uri.Hostname()
+		ps := uri.Port()
+		var port = 0
+		if ps != "" {
+			port, err = strconv.Atoi(ps)
+			if err != nil {
+				log.Fatalf("Error looking up %v, cause: %v", uri.Host, err)
+			}
 		}
 		dnsReq := &dnsresolver.ResolveRequest{
 			CollectionRef: collectionRef,
@@ -137,7 +191,7 @@ func (r *RecorderProxy) RecordRequest() goproxy.ReqHandler {
 		}
 		c, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		dnsRep, err := r.conn.DnsResolverClient().Resolve(c, dnsReq)
+		dnsResp, err := r.conn.DnsResolverClient().Resolve(c, dnsReq)
 		if err != nil {
 			log.Fatalf("Error looking up %v, cause: %v", uri.Host, err)
 		}
@@ -154,7 +208,7 @@ func (r *RecorderProxy) RecordRequest() goproxy.ReqHandler {
 				RecordMeta:     map[int32]*contentwriter.WriteRequestMeta_RecordMeta{},
 				TargetUri:      req.URL.String(),
 				ExecutionId:    executionId,
-				IpAddress:      dnsRep.TextualIp,
+				IpAddress:      dnsResp.TextualIp,
 				CollectionRef:  collectionRef,
 				FetchTimeStamp: fetchTimeStamp,
 			},
@@ -163,7 +217,7 @@ func (r *RecorderProxy) RecordRequest() goproxy.ReqHandler {
 		rCtx.crawlLog = &frontier.CrawlLog{
 			JobExecutionId: jobExecutionId,
 			ExecutionId:    executionId,
-			IpAddress:      dnsRep.TextualIp,
+			IpAddress:      dnsResp.TextualIp,
 			RequestedUri:   req.URL.String(),
 			FetchTimeStamp: fetchTimeStamp,
 		}
@@ -171,7 +225,7 @@ func (r *RecorderProxy) RecordRequest() goproxy.ReqHandler {
 		ctx.UserData = rCtx
 		bodyWrapper, err := WrapBody(req.Body, REQUEST, ctx, 0, -1, "", contentwriter.RecordType_REQUEST, prolog.Bytes())
 		if err != nil {
-			return req, NewResponse(req, goproxy.ContentTypeText, http.StatusBadGateway, "FAIL1: "+err.Error())
+			return req, NewResponse(req, goproxy.ContentTypeText, http.StatusBadGateway, "Veidemann proxy lost connection to GRPC services"+err.Error())
 		}
 		req.Body = bodyWrapper
 
@@ -185,6 +239,19 @@ func (r *RecorderProxy) RecordResponse() goproxy.RespHandler {
 			ctx.UserData.(*recordContext).Close()
 			panic(http.ErrAbortHandler)
 		}
+		if ctx.UserData == nil {
+			fmt.Println("No userdata in response", ctx.Req.URL, resp.StatusCode)
+			return resp
+		}
+
+		rCtx := ctx.UserData.(*recordContext)
+
+		if strings.Contains(resp.Header.Get("X-Cache-Lookup"), "HIT") {
+			rCtx.foundInCache = true
+
+			fmt.Printf("Found in cache\n")
+			//span.log("Loaded from cache");
+		}
 
 		var prolog bytes.Buffer
 		writeResponseProlog(resp, &prolog)
@@ -193,7 +260,7 @@ func (r *RecorderProxy) RecordResponse() goproxy.RespHandler {
 		var err error
 		bodyWrapper, err := WrapBody(resp.Body, RESPONSE, ctx, 1, statusCode, contentType, contentwriter.RecordType_RESPONSE, prolog.Bytes())
 		if err != nil {
-			ctx.UserData.(*recordContext).Close()
+			rCtx.Close()
 			return NewResponse(resp.Request, goproxy.ContentTypeText, http.StatusBadGateway, "Veidemann proxy lost connection to GRPC services\n"+err.Error())
 		}
 

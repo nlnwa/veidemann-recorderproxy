@@ -5,7 +5,7 @@ require (
 	github.com/elazarl/goproxy v0.0.0-20190421051319-9d40249d3c2f
 	github.com/golang/protobuf v1.3.1
 	github.com/grpc-ecosystem/grpc-gateway v1.8.5 // indirect
-	github.com/nlnwa/veidemann-api-go v1.0.0-beta5
+	github.com/nlnwa/veidemann-api-go v1.0.0-beta9
 	github.com/sirupsen/logrus v1.4.1
 	github.com/spf13/pflag v1.0.3
 	github.com/spf13/viper v1.3.2
@@ -15,6 +15,4 @@ require (
 	google.golang.org/grpc v1.21.0
 )
 
-replace github.com/elazarl/goproxy => ../../../github.com/elazarl/goproxy
-
-replace github.com/nlnwa/veidemann-api-go => ../../../github.com/nlnwa/veidemann-api-go
+replace github.com/elazarl/goproxy => github.com/nlnwa/goproxy v0.0.0-20190508063100-5ba1cbe5f680

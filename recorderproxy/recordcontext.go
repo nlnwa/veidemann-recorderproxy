@@ -18,6 +18,7 @@ package recorderproxy
 
 import (
 	"context"
+	"fmt"
 	"github.com/dustin/go-broadcast"
 	"github.com/elazarl/goproxy"
 	"github.com/nlnwa/veidemann-api-go/browsercontroller/v1"
@@ -26,6 +27,8 @@ import (
 	"github.com/nlnwa/veidemann-api-go/contentwriter/v1"
 	"github.com/nlnwa/veidemann-api-go/frontier/v1"
 	log "github.com/sirupsen/logrus"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"io"
 	"net/url"
 	"strings"
@@ -49,6 +52,7 @@ type recordContext struct {
 	pubsubChan        chan interface{}
 	pubsub            broadcast.Broadcaster
 	closed            bool
+	foundInCache      bool
 }
 
 func NewRecordContext(proxy *RecorderProxy, session int64) *recordContext {
@@ -88,11 +92,20 @@ func NewRecordContext(proxy *RecorderProxy, session int64) *recordContext {
 			}
 			switch doReply.Action.(type) {
 			case *browsercontroller.DoReply_Cancel:
-				rCtx.SendError(&commons.Error{
-					Code:   -5011,
-					Msg:    "CANCELED_BY_BROWSER",
-					Detail: "cancelled by browser controller",
-				})
+				if doReply.GetCancel() == "Blocked by robots.txt" {
+					rCtx.SendError(&commons.Error{
+						Code:   -9998,
+						Msg:    "PRECLUDED_BY_ROBOTS",
+						Detail: "Robots.txt rules precluded fetch",
+					})
+					rCtx.bccMsgChan <- doReply
+				} else {
+					rCtx.SendError(&commons.Error{
+						Code:   -5011,
+						Msg:    "CANCELED_BY_BROWSER",
+						Detail: "cancelled by browser controller",
+					})
+				}
 			default:
 				rCtx.bccMsgChan <- doReply
 			}
@@ -133,7 +146,6 @@ func (r *recordContext) saveCrawlLog(crawlLog *frontier.CrawlLog) {
 			},
 		},
 	})
-	defer r.bcc.CloseSend()
 	r.handleErr("Error sending crawl log to browser controller", err)
 }
 
@@ -168,7 +180,13 @@ func (r *recordContext) SendError(err *commons.Error) {
 	}
 	e := r.cwc.Send(&contentwriter.WriteRequest{Value: &contentwriter.WriteRequest_Cancel{Cancel: err.Detail}})
 	if e != nil {
-		log.Errorf("Could not write error to browser controller: %v.\nError was: %v", e, err)
+		s, ok := status.FromError(e)
+		if ok && s.Code() == codes.Internal && s.Message() == "SendMsg called after CloseSend" {
+			// Content writer session is already closed
+			return
+		}
+
+		log.Errorf("Could not write error to content writer: %v.\nError was: %v *** %T", e, err, e)
 	}
 }
 
@@ -182,13 +200,22 @@ func (r *recordContext) handleErr(msg string, err error) bool {
 }
 
 func (r *recordContext) Close() {
-	r.closed = true
-	defer r.bcc.CloseSend()
-	defer r.cwc.CloseSend()
-	r.pubsub.Unregister(r.pubsubChan)
-	if r.cancel != nil {
-		r.cancel()
+	if r.closed {
+		return
 	}
+	r.closed = true
+	r.pubsub.Unregister(r.pubsubChan)
+	err := r.bcc.CloseSend()
+	if err != nil {
+		fmt.Printf("Error closing BCC: %v\n", err)
+	}
+	err = r.cwc.CloseSend()
+	if err != nil {
+		fmt.Printf("Error closing CWC: %v\n", err)
+	}
+	//if r.cancel != nil {
+	//	r.cancel()
+	//}
 }
 
 type LogStealer struct {
