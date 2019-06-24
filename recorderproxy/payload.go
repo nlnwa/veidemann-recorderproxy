@@ -53,11 +53,6 @@ func writeResponseProlog(r *http.Response, w io.Writer) error {
 		return err
 	}
 
-	// End-of-header
-	if _, err := io.WriteString(w, "\r\n"); err != nil {
-		return err
-	}
-
 	// Success
 	return nil
 }
@@ -96,11 +91,6 @@ func writeRequestProlog(r *http.Request, w io.Writer) (err error) {
 	}
 
 	err = r.Header.Write(w)
-	if err != nil {
-		return err
-	}
-
-	_, err = io.WriteString(w, "\r\n")
 	if err != nil {
 		return err
 	}

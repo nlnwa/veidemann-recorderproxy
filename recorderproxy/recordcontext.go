@@ -18,9 +18,6 @@ package recorderproxy
 
 import (
 	"context"
-	"fmt"
-	"github.com/dustin/go-broadcast"
-	"github.com/elazarl/goproxy"
 	"github.com/nlnwa/veidemann-api-go/browsercontroller/v1"
 	"github.com/nlnwa/veidemann-api-go/commons/v1"
 	"github.com/nlnwa/veidemann-api-go/config/v1"
@@ -30,17 +27,31 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"io"
+	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
 type recordContext struct {
-	session           int64
+	// Will contain the client request from the proxy
+	Req *http.Request
+	// Will contain the remote server's response (if available. nil if the request wasn't send yet)
+	Resp *http.Response
+	//RoundTripper RoundTripper
+	// will contain the recent error that occurred while trying to send receive or parse traffic
+	Error error
+	// Will connect a request to a response
+	session int64
+	proxy   *RecorderProxy
+
 	conn              Connections
-	cancel            context.CancelFunc
+	cwcCancelFunc     context.CancelFunc
 	cwc               contentwriter.ContentWriter_WriteClient
 	bcc               browsercontroller.BrowserController_DoClient
+	bccCancelFunc     context.CancelFunc
 	bccMsgChan        chan *browsercontroller.DoReply
 	uri               *url.URL
 	IP                string
@@ -49,90 +60,108 @@ type recordContext struct {
 	meta              *contentwriter.WriteRequest_Meta
 	crawlLog          *frontier.CrawlLog
 	replacementScript *config.BrowserScript
-	pubsubChan        chan interface{}
-	pubsub            broadcast.Broadcaster
 	closed            bool
 	foundInCache      bool
+	precludedByRobots bool
 }
 
-func NewRecordContext(proxy *RecorderProxy, session int64) *recordContext {
-	ctx, cancel := context.WithTimeout(context.Background(), proxy.ConnectionTimeout)
+var i int
 
-	cwc, err := proxy.conn.ContentWriterClient().Write(ctx)
+func NewRecordContext(proxy *RecorderProxy) *recordContext {
+	ctx := &recordContext{
+		session: atomic.AddInt64(&proxy.sess, 1),
+		proxy:   proxy,
+		conn:    proxy.conn,
+	}
+
+	return ctx
+}
+
+func (ctx *recordContext) init(req *http.Request) *recordContext {
+	cwcCtx, cwcCancel := context.WithTimeout(context.Background(), ctx.proxy.ConnectionTimeout)
+	cwc, err := ctx.proxy.conn.ContentWriterClient().Write(cwcCtx)
 	if err != nil {
 		log.Fatalf("Error connecting to content writer, cause: %v", err)
+		cwcCancel()
 		return nil
 	}
 
-	bcc, err := proxy.conn.BrowserControllerClient().Do(context.Background())
+	bccCtx, bccCancel := context.WithTimeout(context.Background(), ctx.proxy.ConnectionTimeout)
+	bcc, err := ctx.proxy.conn.BrowserControllerClient().Do(bccCtx)
 	if err != nil {
 		log.Fatalf("Error connecting to browser controller, cause: %v", err)
+		bccCancel()
 		return nil
 	}
 
-	rCtx := &recordContext{
-		session:    session,
-		conn:       proxy.conn,
-		cancel:     cancel,
-		cwc:        cwc,
-		bcc:        bcc,
-		bccMsgChan: make(chan *browsercontroller.DoReply),
-		pubsubChan: make(chan interface{}),
-		pubsub:     proxy.pubsub,
-	}
+	ctx.Req = req
+	ctx.cwcCancelFunc = cwcCancel
+	ctx.cwc = cwc
+	ctx.bcc = bcc
+	ctx.bccCancelFunc = bccCancel
+	ctx.bccMsgChan = make(chan *browsercontroller.DoReply)
 
 	// Handle messages from browser controller
 	go func() {
+		i++
 		for {
 			doReply, err := bcc.Recv()
 			if err == io.EOF {
 				// read done.
-				close(rCtx.bccMsgChan)
+				ctx.bccMsgChan <- doReply
+				close(ctx.bccMsgChan)
+				ctx.Close()
+				ctx.bccCancelFunc()
 				return
+			}
+			serr := status.Convert(err)
+			if serr.Code() == codes.Canceled {
+				ctx.Logf("context canceled %v\n", serr)
+				ctx.bccMsgChan <- doReply
+				close(ctx.bccMsgChan)
+				ctx.Close()
+				ctx.bccCancelFunc()
+				return
+			}
+			if serr.Code() == codes.DeadlineExceeded {
+				ctx.Logf("context deadline exeeded %v\n", err)
+				ctx.bccMsgChan <- doReply
+				close(ctx.bccMsgChan)
+				ctx.Close()
+				ctx.bccCancelFunc()
+				return
+			}
+			if err != nil {
+				ctx.Logf("unknown error from browser controller %v, %v\n", doReply, err)
+				ctx.bccMsgChan <- doReply
+				close(ctx.bccMsgChan)
+				ctx.Close()
+				ctx.bccCancelFunc()
 			}
 			switch doReply.Action.(type) {
 			case *browsercontroller.DoReply_Cancel:
 				if doReply.GetCancel() == "Blocked by robots.txt" {
-					rCtx.SendError(&commons.Error{
+					ctx.SendError(&commons.Error{
 						Code:   -9998,
 						Msg:    "PRECLUDED_BY_ROBOTS",
 						Detail: "Robots.txt rules precluded fetch",
 					})
-					rCtx.bccMsgChan <- doReply
+					ctx.bccMsgChan <- doReply
 				} else {
-					rCtx.SendError(&commons.Error{
+					ctx.SendError(&commons.Error{
 						Code:   -5011,
 						Msg:    "CANCELED_BY_BROWSER",
 						Detail: "cancelled by browser controller",
 					})
+					ctx.bccMsgChan <- doReply
 				}
 			default:
-				rCtx.bccMsgChan <- doReply
+				ctx.bccMsgChan <- doReply
 			}
 		}
 	}()
 
-	rCtx.pubsub.Register(rCtx.pubsubChan)
-
-	// Handle log events sent to the broadcaster
-	go func() {
-		for v := range rCtx.pubsubChan {
-			m := v.(*msg)
-			if m.session == rCtx.session {
-				switch f := m.format; {
-				case strings.Contains(f, "Cannot write TLS response header from mitm'd client"):
-					err := &commons.Error{
-						Code:   -5011,
-						Msg:    "CANCELED_BY_BROWSER",
-						Detail: "Veidemann recorder proxy lost connection to client",
-					}
-					rCtx.SendError(err)
-				}
-			}
-		}
-	}()
-
-	return rCtx
+	return ctx
 }
 
 func (r *recordContext) saveCrawlLog(crawlLog *frontier.CrawlLog) {
@@ -143,6 +172,7 @@ func (r *recordContext) saveCrawlLog(crawlLog *frontier.CrawlLog) {
 		Action: &browsercontroller.DoRequest_Completed{
 			Completed: &browsercontroller.Completed{
 				CrawlLog: crawlLog,
+				Cached:   r.foundInCache,
 			},
 		},
 	})
@@ -204,37 +234,40 @@ func (r *recordContext) Close() {
 		return
 	}
 	r.closed = true
-	r.pubsub.Unregister(r.pubsubChan)
-	err := r.bcc.CloseSend()
-	if err != nil {
-		fmt.Printf("Error closing BCC: %v\n", err)
+	r.bcc.CloseSend()
+	r.cwc.CloseAndRecv()
+	if r.cwcCancelFunc != nil {
+		r.cwcCancelFunc()
 	}
-	err = r.cwc.CloseSend()
-	if err != nil {
-		fmt.Printf("Error closing CWC: %v\n", err)
-	}
-	//if r.cancel != nil {
-	//	r.cancel()
-	//}
 }
 
-type LogStealer struct {
-	goproxy.Logger
-	pubsub broadcast.Broadcaster
+func (r *recordContext) printf(msg string, argv ...interface{}) {
+	r.proxy.Logger.Printf("[%03d] "+msg+"\n", append([]interface{}{r.session & 0xFF}, argv...)...)
 }
 
-func (l *LogStealer) Printf(format string, v ...interface{}) {
-	l.Logger.Printf(format, v...)
-	m := &msg{
-		session: v[0].(int64),
-		format:  format,
-		v:       v[1:],
+// Logf prints a message to the proxy's log. Should be used in a ProxyHttpServer's filter
+// This message will be printed only if the Verbose field of the ProxyHttpServer is set to true
+func (r *recordContext) Logf(msg string, argv ...interface{}) {
+	if r.proxy.Verbose {
+		r.printf("INFO: "+msg, argv...)
 	}
-	l.pubsub.Submit(m)
 }
 
-type msg struct {
-	session int64
-	format  string
-	v       []interface{}
+// Warnf prints a message to the proxy's log. Should be used in a ProxyHttpServer's filter
+// This message will always be printed.
+func (r *recordContext) Warnf(msg string, argv ...interface{}) {
+	r.printf("WARN: "+msg, argv...)
+}
+
+var charsetFinder = regexp.MustCompile("charset=([^ ;]*)")
+
+// Will try to infer the character set of the request from the headers.
+// Returns the empty string if we don't know which character set it used.
+// Currently it will look for charset=<charset> in the Content-Type header of the request.
+func (r *recordContext) Charset() string {
+	charsets := charsetFinder.FindStringSubmatch(r.Resp.Header.Get("Content-Type"))
+	if charsets == nil {
+		return ""
+	}
+	return charsets[1]
 }

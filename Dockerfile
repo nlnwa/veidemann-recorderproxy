@@ -1,11 +1,9 @@
-FROM golang:1.11 as build
+FROM golang:1.12 as build
 
 WORKDIR /build
 COPY . .
 
-RUN go get -d -v ./...
 RUN go test -v ./... && go install -v ./...
-#RUN CGO_ENABLED=0 go install -tags netgo -v ./...
 
 # Now copy it into our base image.
 FROM gcr.io/distroless/base

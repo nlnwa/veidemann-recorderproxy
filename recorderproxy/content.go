@@ -20,7 +20,6 @@ import (
 	"bytes"
 	"crypto/sha1"
 	"fmt"
-	"github.com/elazarl/goproxy"
 	"github.com/nlnwa/veidemann-api-go/browsercontroller/v1"
 	"github.com/nlnwa/veidemann-api-go/contentwriter/v1"
 	"hash"
@@ -30,45 +29,53 @@ import (
 )
 
 const (
-	REQUEST  = "request"
-	RESPONSE = "response"
-	CRLF     = "\r\n"
+	REQUEST                      = "request"
+	RESPONSE                     = "response"
+	CRLF                         = "\r\n"
+	RECORD_CONTENT_TYPE_REQUEST  = "application/http; msgtype=request"
+	RECORD_CONTENT_TYPE_RESPONSE = "application/http; msgtype=response"
 )
 
 type wrappedBody struct {
 	io.ReadCloser
-	bodyType          string
-	ctx               *goproxy.ProxyCtx
-	recordContext     *recordContext
-	recNum            int32
-	size              int64
-	blockCrc          hash.Hash
-	bodyCrc           hash.Hash
-	recordMeta        *contentwriter.WriteRequestMeta_RecordMeta
-	recordType        contentwriter.RecordType
-	statusCode        int32
-	replacementReader io.Reader
+	bodyType           string
+	recordContext      *recordContext
+	recNum             int32
+	size               int64
+	blockCrc           hash.Hash
+	separatorAdded     bool
+	recordMeta         *contentwriter.WriteRequestMeta_RecordMeta
+	recordType         contentwriter.RecordType
+	statusCode         int32
+	replacementReader  io.Reader
+	payloadContentType string
 }
 
-func WrapBody(body io.ReadCloser, bodyType string, ctx *goproxy.ProxyCtx, recNum int32, statusCode int32, contentType string,
+func WrapBody(body io.ReadCloser, bodyType string, ctx *recordContext, recNum int32, statusCode int32, contentType string,
 	recordType contentwriter.RecordType, prolog []byte) (*wrappedBody, error) {
 
 	b := &wrappedBody{
-		ReadCloser:    body,
-		bodyType:      bodyType,
-		ctx:           ctx,
-		recordContext: ctx.UserData.(*recordContext),
-		recNum:        recNum,
-		statusCode:    statusCode,
-		blockCrc:      sha1.New(),
-		recordType:    recordType,
+		ReadCloser:         body,
+		bodyType:           bodyType,
+		recordContext:      ctx,
+		recNum:             recNum,
+		statusCode:         statusCode,
+		blockCrc:           sha1.New(),
+		recordType:         recordType,
+		payloadContentType: contentType,
 	}
 
 	b.recordMeta = &contentwriter.WriteRequestMeta_RecordMeta{
-		RecordNum:         recNum,
-		Type:              recordType,
-		RecordContentType: contentType,
+		RecordNum: recNum,
+		Type:      recordType,
 	}
+	switch b.recordType {
+	case contentwriter.RecordType_REQUEST:
+		b.recordMeta.RecordContentType = RECORD_CONTENT_TYPE_REQUEST
+	case contentwriter.RecordType_RESPONSE:
+		b.recordMeta.RecordContentType = RECORD_CONTENT_TYPE_RESPONSE
+	}
+
 	b.recordContext.meta.Meta.RecordMeta[recNum] = b.recordMeta
 
 	b.size = int64(len(prolog))
@@ -111,10 +118,10 @@ func (b *wrappedBody) innerRead(r io.Reader, p []byte) (n int, err error) {
 	n, err = r.Read(p)
 	if n > 0 {
 		if !b.recordContext.foundInCache {
-			if b.bodyCrc == nil {
-				b.bodyCrc = sha1.New()
+			if !b.separatorAdded {
 				b.size += 2 // Add size for header and payload separator (\r\n)
 				b.blockCrc.Write([]byte(CRLF))
+				b.separatorAdded = true
 			}
 			if b.bodyType == RESPONSE {
 				b.notifyBc(browsercontroller.NotifyActivity_DATA_RECEIVED)
@@ -122,8 +129,7 @@ func (b *wrappedBody) innerRead(r io.Reader, p []byte) (n int, err error) {
 
 			b.size += int64(n)
 			d := p[:n]
-			b.blockCrc.Write(d)
-			b.bodyCrc.Write(d)
+			writeCrc(b.blockCrc, d)
 			err2 := b.sendPayload(d)
 			b.recordContext.handleErr("Error writing payload to content writer", err2)
 		}
@@ -137,13 +143,15 @@ func (b *wrappedBody) innerRead(r io.Reader, p []byte) (n int, err error) {
 				cl.FetchTimeMs = fetchDurationMs
 				cl.StatusCode = b.statusCode
 				cl.Size = b.size
-				cl.ContentType = b.recordMeta.RecordContentType
+				cl.ContentType = b.payloadContentType
 				b.recordContext.saveCrawlLog(cl)
 			}
 			ee := b.recordContext.cwc.Send(&contentwriter.WriteRequest{Value: &contentwriter.WriteRequest_Cancel{Cancel: "OK: Loaded from cache"}})
 			if ee != nil {
 				fmt.Println("Could not cancel", ee)
 			}
+			b.recordContext.cwc.CloseAndRecv()
+
 			b.recordContext.Close()
 			return
 		}
@@ -152,13 +160,8 @@ func (b *wrappedBody) innerRead(r io.Reader, p []byte) (n int, err error) {
 			b.notifyBc(browsercontroller.NotifyActivity_ALL_DATA_RECEIVED)
 		}
 
-		var payloadDigest string
 		blockDigest := fmt.Sprintf("sha1:%x", b.blockCrc.Sum(nil))
 		b.recordMeta.Size = b.size
-		if b.bodyCrc != nil {
-			payloadDigest = fmt.Sprintf("sha1:%x", b.bodyCrc.Sum(nil))
-		}
-		b.recordMeta.PayloadDigest = payloadDigest
 		b.recordMeta.BlockDigest = blockDigest
 
 		if b.bodyType == RESPONSE {
@@ -178,17 +181,14 @@ func (b *wrappedBody) innerRead(r io.Reader, p []byte) (n int, err error) {
 				cl.StorageRef = cwReply.Meta.RecordMeta[b.recNum].StorageRef
 				cl.WarcRefersTo = cwReply.Meta.RecordMeta[b.recNum].RevisitReferenceId
 				cl.Size = b.size
-				cl.ContentType = b.recordMeta.RecordContentType
+				cl.ContentType = b.payloadContentType
 				cl.RecordType = strings.ToLower(cwReply.Meta.RecordMeta[b.recNum].Type.String())
 				cl.BlockDigest = blockDigest
-				cl.PayloadDigest = payloadDigest
+				cl.PayloadDigest = cwReply.Meta.RecordMeta[b.recNum].PayloadDigest
 				b.recordContext.saveCrawlLog(cl)
 			}
 
 			b.recordContext.Close()
-			if b.recordContext.cancel != nil {
-				b.recordContext.cancel()
-			}
 		}
 	}
 	return
@@ -212,7 +212,7 @@ func (b *wrappedBody) sendProtocolHeader(p []byte) error {
 	if b.recordContext.closed {
 		return nil
 	}
-	payloadRequest := &contentwriter.WriteRequest{
+	protocolHeaderRequest := &contentwriter.WriteRequest{
 		Value: &contentwriter.WriteRequest_ProtocolHeader{
 			ProtocolHeader: &contentwriter.Data{
 				RecordNum: b.recNum,
@@ -221,7 +221,7 @@ func (b *wrappedBody) sendProtocolHeader(p []byte) error {
 		},
 	}
 
-	return b.recordContext.cwc.Send(payloadRequest)
+	return b.recordContext.cwc.Send(protocolHeaderRequest)
 }
 
 func (b *wrappedBody) sendPayload(p []byte) error {
@@ -256,5 +256,17 @@ func (b *wrappedBody) sendMeta() (reply *contentwriter.WriteReply, err error) {
 	reply, err = b.recordContext.cwc.CloseAndRecv()
 
 	return
+}
 
+func writeCrc(h hash.Hash, d []byte) error {
+	l := len(d)
+	c := 0
+	for c < l {
+		n, err := h.Write(d[c:])
+		if err != nil {
+			return err
+		}
+		c += n
+	}
+	return nil
 }

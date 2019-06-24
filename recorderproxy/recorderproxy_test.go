@@ -18,6 +18,7 @@ package recorderproxy_test
 
 import (
 	"context"
+	"crypto/sha1"
 	"crypto/tls"
 	"fmt"
 	"github.com/golang/protobuf/ptypes"
@@ -33,6 +34,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
+	"hash"
 	"io"
 	"io/ioutil"
 	"log"
@@ -52,15 +54,16 @@ import (
 const bufSize = 1024 * 1024
 
 var (
-	acceptAllCerts = &tls.Config{InsecureSkipVerify: true}
-	httpsMux       = http.NewServeMux()
-	httpMux        = http.NewServeMux()
-	srvHttps       = httptest.NewTLSServer(httpsMux)
-	srvHttp        = httptest.NewServer(httpMux)
-	recorderProxy  *recorderproxy.RecorderProxy
-	lis            *bufconn.Listener
-	grpcServices   *GrpcServiceMock
-	client         *http.Client
+	acceptAllCerts  = &tls.Config{InsecureSkipVerify: true}
+	httpsMux        = http.NewServeMux()
+	httpMux         = http.NewServeMux()
+	srvHttps        = httptest.NewTLSServer(httpsMux)
+	srvHttpsBadCert = httptest.NewTLSServer(httpsMux)
+	srvHttp         = httptest.NewServer(httpMux)
+	recorderProxy   *recorderproxy.RecorderProxy
+	lis             *bufconn.Listener
+	grpcServices    *GrpcServiceMock
+	client          *http.Client
 )
 
 func bufDialer(context.Context, string) (net.Conn, error) {
@@ -116,6 +119,7 @@ func init() {
 	}()
 
 	client, recorderProxy = localRecorderProxy()
+	srvHttpsBadCert.TLS.Certificates = []tls.Certificate{tls.Certificate{}}
 }
 
 type requests struct {
@@ -124,45 +128,42 @@ type requests struct {
 	ContentWriterRequests     []*contentwriterV1.WriteRequest
 }
 type test struct {
-	name                      string
-	url                       string
-	wantStatus                int
-	wantContent               string
-	wantReplacedContent       string
-	wantResponseBlockDigest   bool
-	wantResponsePayloadDigest string
-	wantRequestBlockSize      int64
-	wantResponseBlockSize     int64
-	wantGrpcRequests          *requests
-	wantErr                   bool
-	srvWriteTimout            time.Duration
-	grpcTimeout               time.Duration
-	clientTimeout             time.Duration
+	name                    string
+	url                     string
+	wantStatus              int
+	wantContent             string
+	wantReplacedContent     string
+	wantResponseBlockDigest bool
+	wantRequestBlockSize    int64
+	wantResponseBlockSize   int64
+	wantGrpcRequests        *requests
+	wantErr                 bool
+	srvWriteTimout          time.Duration
+	grpcTimeout             time.Duration
+	clientTimeout           time.Duration
 }
 
 func TestGoproxyThroughProxy(t *testing.T) {
 	tests := []test{
 		{
-			name:                      "http:success",
-			url:                       srvHttp.URL + "/a",
-			wantStatus:                200,
-			wantContent:               "content from http server",
-			wantResponsePayloadDigest: "sha1:5b8b70028b3eeeb0b90971d0924447954ab98eff",
-			wantResponseBlockDigest:   true,
-			wantRequestBlockSize:      116,
-			wantResponseBlockSize:     143,
-			wantErr:                   false,
+			name:                    "http:success",
+			url:                     srvHttp.URL + "/a",
+			wantStatus:              200,
+			wantContent:             "content from http server",
+			wantResponseBlockDigest: true,
+			wantRequestBlockSize:    114,
+			wantResponseBlockSize:   141,
+			wantErr:                 false,
 		},
 		{
-			name:                      "https:success",
-			url:                       srvHttps.URL + "/b",
-			wantStatus:                200,
-			wantContent:               "content from https server",
-			wantResponsePayloadDigest: "sha1:b65da69891a174c26e9fc5a528ecc55fadf596d6",
-			wantResponseBlockDigest:   true,
-			wantRequestBlockSize:      116,
-			wantResponseBlockSize:     144,
-			wantErr:                   false,
+			name:                    "https:success",
+			url:                     srvHttps.URL + "/b",
+			wantStatus:              200,
+			wantContent:             "content from https server",
+			wantResponseBlockDigest: true,
+			wantRequestBlockSize:    114,
+			wantResponseBlockSize:   142,
+			wantErr:                 false,
 		},
 		{
 			name:          "http:client timeout",
@@ -181,50 +182,46 @@ func TestGoproxyThroughProxy(t *testing.T) {
 			clientTimeout: 500 * time.Millisecond,
 		},
 		{
-			name:                      "http:not found",
-			url:                       srvHttp.URL + "/c",
-			wantStatus:                404,
-			wantContent:               "404 page not found\n",
-			wantResponsePayloadDigest: "sha1:da3968197e7bf67aa45a77515b52ba2710c5fc34",
-			wantResponseBlockDigest:   true,
-			wantRequestBlockSize:      116,
-			wantResponseBlockSize:     178,
-			wantErr:                   false,
+			name:                    "http:not found",
+			url:                     srvHttp.URL + "/c",
+			wantStatus:              404,
+			wantContent:             "404 page not found\n",
+			wantResponseBlockDigest: true,
+			wantRequestBlockSize:    114,
+			wantResponseBlockSize:   176,
+			wantErr:                 false,
 		},
 		{
-			name:                      "https:not found",
-			url:                       srvHttps.URL + "/c",
-			wantStatus:                404,
-			wantContent:               "404 page not found\n",
-			wantResponsePayloadDigest: "sha1:da3968197e7bf67aa45a77515b52ba2710c5fc34",
-			wantResponseBlockDigest:   true,
-			wantRequestBlockSize:      116,
-			wantResponseBlockSize:     178,
-			wantErr:                   false,
+			name:                    "https:not found",
+			url:                     srvHttps.URL + "/c",
+			wantStatus:              404,
+			wantContent:             "404 page not found\n",
+			wantResponseBlockDigest: true,
+			wantRequestBlockSize:    114,
+			wantResponseBlockSize:   176,
+			wantErr:                 false,
 		},
 		{
-			name:                      "http:replace",
-			url:                       srvHttp.URL + "/replace",
-			wantStatus:                200,
-			wantContent:               "should be replaced",
-			wantReplacedContent:       "replaced",
-			wantResponsePayloadDigest: "sha1:cd5b9640d66ce21e6cb7542b4c82c1b04fe3a4c5",
-			wantResponseBlockDigest:   true,
-			wantRequestBlockSize:      122,
-			wantResponseBlockSize:     137,
-			wantErr:                   false,
+			name:                    "http:replace",
+			url:                     srvHttp.URL + "/replace",
+			wantStatus:              200,
+			wantContent:             "should be replaced",
+			wantReplacedContent:     "replaced",
+			wantResponseBlockDigest: true,
+			wantRequestBlockSize:    120,
+			wantResponseBlockSize:   135,
+			wantErr:                 false,
 		},
 		{
-			name:                      "https:replace",
-			url:                       srvHttps.URL + "/replace",
-			wantStatus:                200,
-			wantContent:               "should be replaced",
-			wantReplacedContent:       "replaced",
-			wantResponsePayloadDigest: "sha1:cd5b9640d66ce21e6cb7542b4c82c1b04fe3a4c5",
-			wantResponseBlockDigest:   true,
-			wantRequestBlockSize:      122,
-			wantResponseBlockSize:     137,
-			wantErr:                   false,
+			name:                    "https:replace",
+			url:                     srvHttps.URL + "/replace",
+			wantStatus:              200,
+			wantContent:             "should be replaced",
+			wantReplacedContent:     "replaced",
+			wantResponseBlockDigest: true,
+			wantRequestBlockSize:    120,
+			wantResponseBlockSize:   135,
+			wantErr:                 false,
 		},
 		{
 			name:           "http:server timeout",
@@ -287,24 +284,22 @@ func TestGoproxyThroughProxy(t *testing.T) {
 			wantErr:     false,
 		},
 		{
-			name:                      "http:content writer error",
-			url:                       srvHttp.URL + "/cwerr",
-			wantStatus:                200,
-			wantContent:               "content from http server",
-			wantResponsePayloadDigest: "sha1:5b8b70028b3eeeb0b90971d0924447954ab98eff",
-			wantRequestBlockSize:      120,
-			wantResponseBlockSize:     143,
-			wantErr:                   false,
+			name:                  "http:content writer error",
+			url:                   srvHttp.URL + "/cwerr",
+			wantStatus:            200,
+			wantContent:           "content from http server",
+			wantRequestBlockSize:  118,
+			wantResponseBlockSize: 141,
+			wantErr:               false,
 		},
 		{
-			name:                      "https:content writer error",
-			url:                       srvHttps.URL + "/cwerr",
-			wantStatus:                200,
-			wantContent:               "content from https server",
-			wantResponsePayloadDigest: "sha1:b65da69891a174c26e9fc5a528ecc55fadf596d6",
-			wantRequestBlockSize:      120,
-			wantResponseBlockSize:     144,
-			wantErr:                   false,
+			name:                  "https:content writer error",
+			url:                   srvHttps.URL + "/cwerr",
+			wantStatus:            200,
+			wantContent:           "content from https server",
+			wantRequestBlockSize:  118,
+			wantResponseBlockSize: 142,
+			wantErr:               false,
 		},
 		{
 			name:                  "http:cached",
@@ -312,7 +307,7 @@ func TestGoproxyThroughProxy(t *testing.T) {
 			wantStatus:            200,
 			wantContent:           "content from http server",
 			wantRequestBlockSize:  116,
-			wantResponseBlockSize: 138,
+			wantResponseBlockSize: 136,
 			wantErr:               false,
 		},
 		{
@@ -321,30 +316,36 @@ func TestGoproxyThroughProxy(t *testing.T) {
 			wantStatus:            200,
 			wantContent:           "content from https server",
 			wantRequestBlockSize:  116,
-			wantResponseBlockSize: 138,
+			wantResponseBlockSize: 136,
 			wantErr:               false,
 		},
 		{
-			name:        "http:no host",
-			url:         srvHttp.URL[:len(srvHttp.URL)-2] + "1/no_host",
-			wantStatus:  0,
-			wantContent: "",
-			//wantResponsePayloadDigest: "sha1:5b8b70028b3eeeb0b90971d0924447954ab98eff",
-			//wantResponseBlockDigest:   true,
+			name:                  "http:no host",
+			url:                   srvHttp.URL[:len(srvHttp.URL)-2] + "1/no_host",
+			wantStatus:            0,
+			wantContent:           "",
 			wantRequestBlockSize:  116,
 			wantResponseBlockSize: 138,
 			wantErr:               true,
 		},
 		{
-			name:        "https:no host",
-			url:         srvHttps.URL[:len(srvHttps.URL)-2] + "1/no_host",
-			wantStatus:  0,
-			wantContent: "",
-			//wantResponsePayloadDigest: "sha1:b65da69891a174c26e9fc5a528ecc55fadf596d6",
-			//wantResponseBlockDigest:   true,
+			name:                  "https:no host",
+			url:                   srvHttps.URL[:len(srvHttps.URL)-2] + "1/no_host",
+			wantStatus:            0,
+			wantContent:           "",
 			wantRequestBlockSize:  116,
 			wantResponseBlockSize: 138,
 			wantErr:               true,
+		},
+		{
+			name:                    "https:handshake failure",
+			url:                     srvHttpsBadCert.URL + "/b",
+			wantStatus:              0,
+			wantContent:             "",
+			wantResponseBlockDigest: false,
+			wantRequestBlockSize:    116,
+			wantResponseBlockSize:   144,
+			wantErr:                 true,
 		},
 	}
 
@@ -363,8 +364,12 @@ func TestGoproxyThroughProxy(t *testing.T) {
 
 		t.Run(tt.name, func(t *testing.T) {
 			statusCode, got, err := get(tt.url, client, tt.clientTimeout)
-			<-grpcServices.doneBC
-			<-grpcServices.doneCW
+			if grpcServices.doneBC != nil {
+				<-grpcServices.doneBC
+			}
+			if grpcServices.doneCW != nil {
+				<-grpcServices.doneCW
+			}
 
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Client get() error = %v, wantErr %v (%v, %s)", err, tt.wantErr, statusCode, got)
@@ -390,6 +395,9 @@ func TestGoproxyThroughProxy(t *testing.T) {
 			compareCW(t, "ContentWriter", tt, tt.wantGrpcRequests.ContentWriterRequests, grpcServices.requests.ContentWriterRequests)
 		})
 	}
+
+	srvHttp.Close()
+	srvHttps.Close()
 }
 
 /**
@@ -417,6 +425,8 @@ func (test *test) generateExpectedRequests() {
 		test.generateCachedRequests(u, p)
 	case strings.HasSuffix(n, ":no host"):
 		test.generateConnectionRefusedRequests(u, p)
+	case strings.HasSuffix(n, ":handshake failure"):
+		test.generateHandshakeFailureRequests(u, p)
 	default:
 		test.generateSuccessRequests(u, p)
 	}
@@ -456,7 +466,6 @@ func (test *test) generateSuccessRequests(u *url.URL, p int) {
 						Size:                test.wantResponseBlockSize,
 						RequestedUri:        test.url,
 						ContentType:         "text/plain; charset=utf-8",
-						PayloadDigest:       test.wantResponsePayloadDigest,
 						StorageRef:          "storageRef_1",
 						RecordType:          "revisit",
 						WarcRefersTo:        "revisit_0",
@@ -474,12 +483,12 @@ func (test *test) generateSuccessRequests(u *url.URL, p int) {
 		{
 			Value: &contentwriterV1.WriteRequest_ProtocolHeader{
 				ProtocolHeader: &contentwriterV1.Data{
-					RecordNum: 0, Data: []byte(fmt.Sprintf("GET %s HTTP/1.1\r\nHost: %s:%s\r\nAccept-Encoding: gzip\r\nConnection: close\r\nUser-Agent: Go-http-client/1.1\r\n\r\n", u.Path, u.Hostname(), u.Port()))},
+					RecordNum: 0, Data: []byte(fmt.Sprintf("GET %s HTTP/1.1\r\nHost: %s:%s\r\nAccept-Encoding: gzip\r\nConnection: close\r\nUser-Agent: Go-http-client/1.1\r\n", u.Path, u.Hostname(), u.Port()))},
 			},
 		},
 		{
 			Value: &contentwriterV1.WriteRequest_ProtocolHeader{
-				ProtocolHeader: &contentwriterV1.Data{RecordNum: 1, Data: []byte(fmt.Sprintf("HTTP/1.1 %d %s\r\nContent-Length: %d\r\nContent-Type: text/plain; charset=utf-8\r\nDate: Wed, 15 May 2019 12:41:02 GMT%s\r\n\r\n", test.wantStatus, http.StatusText(test.wantStatus), len(test.wantContent), extraHeaders))},
+				ProtocolHeader: &contentwriterV1.Data{RecordNum: 1, Data: []byte(fmt.Sprintf("HTTP/1.1 %d %s\r\nContent-Length: %d\r\nContent-Type: text/plain; charset=utf-8\r\nDate: Wed, 15 May 2019 12:41:02 GMT%s\r\n", test.wantStatus, http.StatusText(test.wantStatus), len(test.wantContent), extraHeaders))},
 			},
 		},
 		{
@@ -496,15 +505,15 @@ func (test *test) generateSuccessRequests(u *url.URL, p int) {
 					CollectionRef: &configV1.ConfigRef{Kind: configV1.Kind_collection, Id: "col1"},
 					RecordMeta: map[int32]*contentwriterV1.WriteRequestMeta_RecordMeta{
 						0: {
-							RecordNum: 0,
-							Type:      contentwriterV1.RecordType_REQUEST,
-							Size:      test.wantRequestBlockSize,
+							RecordNum:         0,
+							Type:              contentwriterV1.RecordType_REQUEST,
+							RecordContentType: "application/http; msgtype=request",
+							Size:              test.wantRequestBlockSize,
 						},
 						1: {
 							RecordNum:         1,
 							Type:              contentwriterV1.RecordType_RESPONSE,
-							RecordContentType: "text/plain; charset=utf-8",
-							PayloadDigest:     test.wantResponsePayloadDigest,
+							RecordContentType: "application/http; msgtype=response",
 							Size:              test.wantResponseBlockSize,
 						},
 					},
@@ -628,7 +637,7 @@ func (test *test) generateGrpcServiceTimeoutRequests(u *url.URL, p int) {
 		{
 			Value: &contentwriterV1.WriteRequest_ProtocolHeader{
 				ProtocolHeader: &contentwriterV1.Data{
-					RecordNum: 0, Data: []byte(fmt.Sprintf("GET %s HTTP/1.1\r\nHost: %s:%s\r\nAccept-Encoding: gzip\r\nConnection: close\r\nUser-Agent: Go-http-client/1.1\r\n\r\n", u.Path, u.Hostname(), u.Port())),
+					RecordNum: 0, Data: []byte(fmt.Sprintf("GET %s HTTP/1.1\r\nHost: %s:%s\r\nAccept-Encoding: gzip\r\nConnection: close\r\nUser-Agent: Go-http-client/1.1\r\n", u.Path, u.Hostname(), u.Port())),
 				},
 			},
 		},
@@ -733,7 +742,7 @@ func (test *test) generateContentWriterErrorRequests(u *url.URL, p int) {
 						Error: &commons.Error{
 							Code:   -5,
 							Msg:    "Error writing to content writer",
-							Detail: "rpc error: code = InvalidArgument desc = Size mismatch",
+							Detail: "rpc error: code = InvalidArgument desc = Fake error",
 						},
 					},
 				},
@@ -745,12 +754,12 @@ func (test *test) generateContentWriterErrorRequests(u *url.URL, p int) {
 		{
 			Value: &contentwriterV1.WriteRequest_ProtocolHeader{
 				ProtocolHeader: &contentwriterV1.Data{
-					RecordNum: 0, Data: []byte(fmt.Sprintf("GET %s HTTP/1.1\r\nHost: %s:%s\r\nAccept-Encoding: gzip\r\nConnection: close\r\nUser-Agent: Go-http-client/1.1\r\n\r\n", u.Path, u.Hostname(), u.Port()))},
+					RecordNum: 0, Data: []byte(fmt.Sprintf("GET %s HTTP/1.1\r\nHost: %s:%s\r\nAccept-Encoding: gzip\r\nConnection: close\r\nUser-Agent: Go-http-client/1.1\r\n", u.Path, u.Hostname(), u.Port()))},
 			},
 		},
 		{
 			Value: &contentwriterV1.WriteRequest_ProtocolHeader{
-				ProtocolHeader: &contentwriterV1.Data{RecordNum: 1, Data: []byte(fmt.Sprintf("HTTP/1.1 %d %s\r\nContent-Length: %d\r\nContent-Type: text/plain; charset=utf-8\r\nDate: Wed, 15 May 2019 12:41:02 GMT\r\n\r\n", test.wantStatus, http.StatusText(test.wantStatus), len(test.wantContent)))},
+				ProtocolHeader: &contentwriterV1.Data{RecordNum: 1, Data: []byte(fmt.Sprintf("HTTP/1.1 %d %s\r\nContent-Length: %d\r\nContent-Type: text/plain; charset=utf-8\r\nDate: Wed, 15 May 2019 12:41:02 GMT\r\n", test.wantStatus, http.StatusText(test.wantStatus), len(test.wantContent)))},
 			},
 		},
 		{
@@ -767,15 +776,15 @@ func (test *test) generateContentWriterErrorRequests(u *url.URL, p int) {
 					CollectionRef: &configV1.ConfigRef{Kind: configV1.Kind_collection, Id: "col1"},
 					RecordMeta: map[int32]*contentwriterV1.WriteRequestMeta_RecordMeta{
 						0: {
-							RecordNum: 0,
-							Type:      contentwriterV1.RecordType_REQUEST,
-							Size:      test.wantRequestBlockSize,
+							RecordNum:         0,
+							Type:              contentwriterV1.RecordType_REQUEST,
+							RecordContentType: "application/http; msgtype=request",
+							Size:              test.wantRequestBlockSize,
 						},
 						1: {
 							RecordNum:         1,
 							Type:              contentwriterV1.RecordType_RESPONSE,
-							RecordContentType: "text/plain; charset=utf-8",
-							PayloadDigest:     test.wantResponsePayloadDigest,
+							RecordContentType: "application/http; msgtype=response",
 							Size:              test.wantResponseBlockSize,
 						},
 					},
@@ -805,11 +814,11 @@ func (test *test) generateCachedRequests(u *url.URL, p int) {
 						Size:           test.wantResponseBlockSize,
 						RequestedUri:   test.url,
 						ContentType:    "text/plain; charset=utf-8",
-						PayloadDigest:  test.wantResponsePayloadDigest,
 						IpAddress:      "1.2.1.2",
 						ExecutionId:    "eid",
 						JobExecutionId: "jid",
 					},
+					Cached: true,
 				},
 			},
 		},
@@ -819,7 +828,7 @@ func (test *test) generateCachedRequests(u *url.URL, p int) {
 		{
 			Value: &contentwriterV1.WriteRequest_ProtocolHeader{
 				ProtocolHeader: &contentwriterV1.Data{
-					RecordNum: 0, Data: []byte(fmt.Sprintf("GET %s HTTP/1.1\r\nHost: %s:%s\r\nAccept-Encoding: gzip\r\nConnection: close\r\nUser-Agent: Go-http-client/1.1\r\n\r\n", u.Path, u.Hostname(), u.Port()))},
+					RecordNum: 0, Data: []byte(fmt.Sprintf("GET %s HTTP/1.1\r\nHost: %s:%s\r\nAccept-Encoding: gzip\r\nConnection: close\r\nUser-Agent: Go-http-client/1.1\r\n", u.Path, u.Hostname(), u.Port()))},
 			},
 		},
 		{
@@ -846,15 +855,15 @@ func (test *test) generateConnectionRefusedRequests(u *url.URL, p int) {
 			Action: &browsercontrollerV1.DoRequest_Completed{
 				Completed: &browsercontrollerV1.Completed{
 					CrawlLog: &frontier.CrawlLog{
-						StatusCode:     -5,
+						StatusCode:     -2,
 						RequestedUri:   test.url,
 						RecordType:     "response",
 						IpAddress:      "1.2.1.2",
 						ExecutionId:    "eid",
 						JobExecutionId: "jid",
 						Error: &commons.Error{
-							Code:   -5,
-							Msg:    "RUNTIME_EXCEPTION",
+							Code:   -2,
+							Msg:    "CONNECT_FAILED",
 							Detail: "dial tcp 127.0.0.1:" + u.Port() + ": connect: connection refused",
 						},
 					},
@@ -867,12 +876,60 @@ func (test *test) generateConnectionRefusedRequests(u *url.URL, p int) {
 		{
 			Value: &contentwriterV1.WriteRequest_ProtocolHeader{
 				ProtocolHeader: &contentwriterV1.Data{
-					RecordNum: 0, Data: []byte(fmt.Sprintf("GET %s HTTP/1.1\r\nHost: %s:%s\r\nAccept-Encoding: gzip\r\nConnection: close\r\nUser-Agent: Go-http-client/1.1\r\n\r\n", u.Path, u.Hostname(), u.Port()))},
+					RecordNum: 0, Data: []byte(fmt.Sprintf("GET %s HTTP/1.1\r\nHost: %s:%s\r\nAccept-Encoding: gzip\r\nConnection: close\r\nUser-Agent: Go-http-client/1.1\r\n", u.Path, u.Hostname(), u.Port()))},
 			},
 		},
 		{
 			Value: &contentwriterV1.WriteRequest_Cancel{
 				Cancel: "dial tcp 127.0.0.1:" + u.Port() + ": connect: connection refused",
+			},
+		},
+	}
+
+	test.wantGrpcRequests = r
+}
+
+func (test *test) generateHandshakeFailureRequests(u *url.URL, p int) {
+	r := &requests{}
+	r.DnsResolverRequests = []*dnsresolverV1.ResolveRequest{
+		{Host: u.Hostname(), Port: int32(p), CollectionRef: &configV1.ConfigRef{Kind: configV1.Kind_collection, Id: "col1"}},
+	}
+
+	r.BrowserControllerRequests = []*browsercontrollerV1.DoRequest{
+		{
+			Action: &browsercontrollerV1.DoRequest_New{New: &browsercontrollerV1.RegisterNew{Uri: test.url}},
+		},
+		{
+			Action: &browsercontrollerV1.DoRequest_Completed{
+				Completed: &browsercontrollerV1.Completed{
+					CrawlLog: &frontier.CrawlLog{
+						StatusCode:     -2,
+						RequestedUri:   test.url,
+						RecordType:     "response",
+						IpAddress:      "1.2.1.2",
+						ExecutionId:    "eid",
+						JobExecutionId: "jid",
+						Error: &commons.Error{
+							Code:   -2,
+							Msg:    "CONNECT_FAILED",
+							Detail: "tls: handshake failure",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	r.ContentWriterRequests = []*contentwriterV1.WriteRequest{
+		{
+			Value: &contentwriterV1.WriteRequest_ProtocolHeader{
+				ProtocolHeader: &contentwriterV1.Data{
+					RecordNum: 0, Data: []byte(fmt.Sprintf("GET %s HTTP/1.1\r\nHost: %s:%s\r\nAccept-Encoding: gzip\r\nConnection: close\r\nUser-Agent: Go-http-client/1.1\r\n", u.Path, u.Hostname(), u.Port()))},
+			},
+		},
+		{
+			Value: &contentwriterV1.WriteRequest_Cancel{
+				Cancel: "tls: handshake failure",
 			},
 		},
 	}
@@ -888,7 +945,7 @@ func compareCW(t *testing.T, serviceName string, tt test, want []*contentwriterV
 		if requestsEqual(lastGot, lastWant) {
 			return
 		} else {
-			t.Errorf("%s service got wrong cancel request.  %s request #%d\nWas:\n%v\nWant:\n%v", serviceName, serviceName,
+			t.Errorf("%s service got wrong cwcCancelFunc request.  %s request #%d\nWas:\n%v\nWant:\n%v", serviceName, serviceName,
 				len(got), printRequest(lastGot), printRequest(lastWant))
 		}
 	}
@@ -1130,7 +1187,7 @@ type GrpcServiceMock struct {
 }
 
 func NewGrpcServiceMock() *GrpcServiceMock {
-	return &GrpcServiceMock{l: &sync.Mutex{}, doneBC: make(chan bool, 200), doneCW: make(chan bool, 200)}
+	return &GrpcServiceMock{l: &sync.Mutex{}}
 }
 
 func (s *GrpcServiceMock) addBcRequest(r *browsercontrollerV1.DoRequest) {
@@ -1169,11 +1226,19 @@ func (s *GrpcServiceMock) Resolve(ctx context.Context, in *dnsresolverV1.Resolve
 
 // Implements ContentWriterService
 func (s *GrpcServiceMock) Write(server contentwriterV1.ContentWriter_WriteServer) error {
+	s.doneCW = make(chan bool, 200)
 	records := map[int32]*contentwriterV1.WriteResponseMeta_RecordMeta{}
+	data := make(map[int32][]byte)
 	size := make(map[int32]int64)
-	hasPayload := false
+	separatorAdded := make(map[int32]bool)
 	gotMeta := false
 	gotCancel := false
+	blockDigest := make(map[int32]hash.Hash)
+
+	go func() {
+		<-server.Context().Done()
+		s.doneCW <- true
+	}()
 
 	for {
 		request, err := server.Recv()
@@ -1181,7 +1246,6 @@ func (s *GrpcServiceMock) Write(server contentwriterV1.ContentWriter_WriteServer
 			if !gotMeta && !gotCancel {
 				return fmt.Errorf("missing metadata")
 			}
-			s.doneCW <- true
 			return server.SendAndClose(&contentwriterV1.WriteReply{
 				Meta: &contentwriterV1.WriteResponseMeta{
 					RecordMeta: records,
@@ -1189,7 +1253,7 @@ func (s *GrpcServiceMock) Write(server contentwriterV1.ContentWriter_WriteServer
 			})
 		}
 		if err != nil {
-			s.doneCW <- true
+			fmt.Printf("Unknown Error in ContentWriter communication %v\n", err)
 			return err
 		}
 
@@ -1198,12 +1262,20 @@ func (s *GrpcServiceMock) Write(server contentwriterV1.ContentWriter_WriteServer
 		switch v := request.Value.(type) {
 		case *contentwriterV1.WriteRequest_ProtocolHeader:
 			size[v.ProtocolHeader.RecordNum] = int64(len(v.ProtocolHeader.Data))
+			separatorAdded[v.ProtocolHeader.RecordNum] = false
+			blockDigest[v.ProtocolHeader.RecordNum] = sha1.New()
+			blockDigest[v.ProtocolHeader.RecordNum].Write(v.ProtocolHeader.Data)
+			data[v.ProtocolHeader.RecordNum] = v.ProtocolHeader.Data
 		case *contentwriterV1.WriteRequest_Payload:
-			if !hasPayload {
-				hasPayload = true
+			if !separatorAdded[v.Payload.RecordNum] {
+				separatorAdded[v.Payload.RecordNum] = true
 				size[v.Payload.RecordNum] += 2
+				blockDigest[v.Payload.RecordNum].Write([]byte("\r\n"))
+				data[v.Payload.RecordNum] = append(data[v.Payload.RecordNum], '\r', '\n')
 			}
 			size[v.Payload.RecordNum] += int64(len(v.Payload.Data))
+			blockDigest[v.Payload.RecordNum].Write(v.Payload.Data)
+			data[v.Payload.RecordNum] = append(data[v.Payload.RecordNum], v.Payload.Data...)
 		case *contentwriterV1.WriteRequest_Meta:
 			gotMeta = true
 			for i, v2 := range v.Meta.RecordMeta {
@@ -1211,9 +1283,17 @@ func (s *GrpcServiceMock) Write(server contentwriterV1.ContentWriter_WriteServer
 					return status.Error(codes.InvalidArgument, "Size mismatch")
 				}
 
+				pld := ""
+				if blockDigest[v2.RecordNum] != nil {
+					pld = fmt.Sprintf("sha1:%x", blockDigest[v2.RecordNum].Sum(nil))
+				}
+				if pld != v2.BlockDigest {
+					return status.Error(codes.InvalidArgument, "Block digest mismatch")
+				}
+
 				// Fake error
 				if strings.Contains(v.Meta.TargetUri, "cwerr") {
-					return status.Error(codes.InvalidArgument, "Size mismatch")
+					return status.Error(codes.InvalidArgument, "Fake error")
 				}
 
 				idxString := strconv.Itoa(int(i))
@@ -1246,11 +1326,9 @@ func (s *GrpcServiceMock) Do(server browsercontrollerV1.BrowserController_DoServ
 	for {
 		request, err := server.Recv()
 		if err == io.EOF {
-			s.doneBC <- true
 			return nil
 		}
 		if err != nil {
-			s.doneBC <- true
 			return err
 		}
 
@@ -1258,14 +1336,18 @@ func (s *GrpcServiceMock) Do(server browsercontrollerV1.BrowserController_DoServ
 
 		switch v := request.Action.(type) {
 		case *browsercontrollerV1.DoRequest_New:
+			s.doneBC = make(chan bool, 200)
+			go func() {
+				<-server.Context().Done()
+				s.doneBC <- true
+			}()
+
 			if strings.HasSuffix(v.New.Uri, "blocked") {
 				_ = server.Send(&browsercontrollerV1.DoReply{
 					Action: &browsercontrollerV1.DoReply_Cancel{
 						Cancel: "Blocked by robots.txt",
 					},
 				})
-				s.doneCW <- true
-				s.doneBC <- true
 				return nil
 			}
 

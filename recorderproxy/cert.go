@@ -17,10 +17,23 @@
 package recorderproxy
 
 import (
+	"crypto"
 	"crypto/tls"
 	"crypto/x509"
-	"github.com/elazarl/goproxy"
+	"time"
 )
+
+var tlsClientSkipVerify = &tls.Config{InsecureSkipVerify: true}
+
+var (
+	RecorderProxyCertCache  *CertCache
+	RecorderProxyPrivateKey crypto.Signer
+	RecorderProxyCa         tls.Certificate
+	err                     error
+)
+var defaultTLSConfig = &tls.Config{
+	InsecureSkipVerify: true,
+}
 
 var caCert = []byte(`-----BEGIN CERTIFICATE-----
 MIIB8jCCAZmgAwIBAgIUQVlggOJ1FJzPWdBCQARPSc/3H78wCgYIKoZIzj0EAwIw
@@ -43,26 +56,46 @@ sQdpastITEDygFGgrlIjPPA5dUMD0rlKVSyApDlxDRvR3NZ6T7DfkrDG
 -----END PRIVATE KEY-----`)
 
 func SetCA(caCertFile, caKeyFile string) error {
-	var (
-		goproxyCa tls.Certificate
-		err       error
-	)
-
 	if caCertFile == "" {
-		goproxyCa, err = tls.X509KeyPair(caCert, caKey)
+		RecorderProxyCa, err = tls.X509KeyPair(caCert, caKey)
 	} else {
-		goproxyCa, err = tls.LoadX509KeyPair(caCertFile, caKeyFile)
+		RecorderProxyCa, err = tls.LoadX509KeyPair(caCertFile, caKeyFile)
 	}
 	if err != nil {
 		return err
 	}
-	if goproxyCa.Leaf, err = x509.ParseCertificate(goproxyCa.Certificate[0]); err != nil {
+	if RecorderProxyCa.Leaf, err = x509.ParseCertificate(RecorderProxyCa.Certificate[0]); err != nil {
 		return err
 	}
-	goproxy.GoproxyCa = goproxyCa
-	goproxy.OkConnect = &goproxy.ConnectAction{Action: goproxy.ConnectAccept, TLSConfig: goproxy.TLSConfigFromCA(&goproxyCa)}
-	goproxy.MitmConnect = &goproxy.ConnectAction{Action: goproxy.ConnectMitm, TLSConfig: goproxy.TLSConfigFromCA(&goproxyCa)}
-	goproxy.HTTPMitmConnect = &goproxy.ConnectAction{Action: goproxy.ConnectHTTPMitm, TLSConfig: goproxy.TLSConfigFromCA(&goproxyCa)}
-	goproxy.RejectConnect = &goproxy.ConnectAction{Action: goproxy.ConnectReject, TLSConfig: goproxy.TLSConfigFromCA(&goproxyCa)}
+	RecorderProxyPrivateKey, err = generatePrivateKey(RecorderProxyCa.PrivateKey)
+	if err != nil {
+		return err
+	}
+	RecorderProxyCertCache, err = NewCache(60*time.Minute, 64)
+	if err != nil {
+		return err
+	}
+
 	return nil
+}
+
+func TLSConfigFromCA() func(host string, ctx *recordContext) (*tls.Config, error) {
+	return func(host string, ctx *recordContext) (*tls.Config, error) {
+		var err error
+		var cert *tls.Certificate
+
+		hostname := stripPort(host)
+		config := *defaultTLSConfig
+		ctx.Logf("signing for %s", stripPort(host))
+
+		cert, err = RecorderProxyCertCache.Get(hostname, ctx)
+
+		if err != nil {
+			ctx.Warnf("Cannot sign host certificate with provided CA: %s", err)
+			return nil, err
+		}
+
+		config.Certificates = append(config.Certificates, *cert)
+		return &config, nil
+	}
 }
