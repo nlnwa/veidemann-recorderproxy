@@ -120,7 +120,7 @@ func (proxy *RecorderProxy) SetVerbose(v bool) {
 	proxy.Verbose = v
 }
 
-func (proxy *RecorderProxy) filterRequest(req *http.Request, rCtx *recordContext) (*http.Request, *http.Response) {
+func (proxy *RecorderProxy) filterRequest(req *http.Request, ctx *recordContext) (*http.Request, *http.Response) {
 	var prolog bytes.Buffer
 	writeRequestProlog(req, &prolog)
 
@@ -136,6 +136,14 @@ func (proxy *RecorderProxy) filterRequest(req *http.Request, rCtx *recordContext
 		}
 	}
 
+	ctx.FetchTimesTamp = time.Now()
+	fetchTimeStamp, _ := ptypes.TimestampProto(ctx.FetchTimesTamp)
+
+	ctx.crawlLog = &frontier.CrawlLog{
+		RequestedUri:   req.URL.String(),
+		FetchTimeStamp: fetchTimeStamp,
+	}
+
 	bccRequest := &browsercontroller.DoRequest{
 		Action: &browsercontroller.DoRequest_New{
 			New: &browsercontroller.RegisterNew{
@@ -148,16 +156,17 @@ func (proxy *RecorderProxy) filterRequest(req *http.Request, rCtx *recordContext
 		},
 	}
 
-	err := rCtx.bcc.Send(bccRequest)
+	err := ctx.bcc.Send(bccRequest)
 	if err != nil {
 		log.Fatalf("Error register with browser controller, cause: %v", err)
 	}
 
-	bcReply := <-rCtx.bccMsgChan
+	bcReply := <-ctx.bccMsgChan
+
 	switch v := bcReply.Action.(type) {
 	case *browsercontroller.DoReply_Cancel:
 		if v.Cancel == "Blocked by robots.txt" {
-			rCtx.precludedByRobots = true
+			ctx.precludedByRobots = true
 		}
 		return req, NewResponse(req, ContentTypeText, 403, v.Cancel)
 	}
@@ -165,7 +174,7 @@ func (proxy *RecorderProxy) filterRequest(req *http.Request, rCtx *recordContext
 	executionId = bcReply.GetNew().CrawlExecutionId
 	jobExecutionId = bcReply.GetNew().GetJobExecutionId()
 	collectionRef = bcReply.GetNew().CollectionRef
-	rCtx.replacementScript = bcReply.GetNew().ReplacementScript
+	ctx.replacementScript = bcReply.GetNew().ReplacementScript
 
 	uri := req.URL
 
@@ -194,10 +203,7 @@ func (proxy *RecorderProxy) filterRequest(req *http.Request, rCtx *recordContext
 	req.Header.Set(EXECUTION_ID, executionId)
 	req.Header.Set(JOB_EXECUTION_ID, jobExecutionId)
 
-	rCtx.FetchTimesTamp = time.Now()
-	fetchTimeStamp, _ := ptypes.TimestampProto(rCtx.FetchTimesTamp)
-
-	rCtx.meta = &contentwriter.WriteRequest_Meta{
+	ctx.meta = &contentwriter.WriteRequest_Meta{
 		Meta: &contentwriter.WriteRequestMeta{
 			RecordMeta:     map[int32]*contentwriter.WriteRequestMeta_RecordMeta{},
 			TargetUri:      req.URL.String(),
@@ -208,16 +214,14 @@ func (proxy *RecorderProxy) filterRequest(req *http.Request, rCtx *recordContext
 		},
 	}
 
-	rCtx.crawlLog = &frontier.CrawlLog{
-		JobExecutionId: jobExecutionId,
-		ExecutionId:    executionId,
-		IpAddress:      dnsResp.TextualIp,
-		RequestedUri:   req.URL.String(),
-		FetchTimeStamp: fetchTimeStamp,
-	}
+	ctx.crawlLog.JobExecutionId = jobExecutionId
+	ctx.crawlLog.ExecutionId = executionId
+	ctx.crawlLog.IpAddress = dnsResp.TextualIp
+	ctx.crawlLog.RequestedUri = req.URL.String()
+	ctx.crawlLog.FetchTimeStamp = fetchTimeStamp
 
 	contentType := req.Header.Get("Content-Type")
-	bodyWrapper, err := WrapBody(req.Body, REQUEST, rCtx, 0, -1, contentType, contentwriter.RecordType_REQUEST, prolog.Bytes())
+	bodyWrapper, err := WrapBody(req.Body, REQUEST, ctx, 0, -1, contentType, contentwriter.RecordType_REQUEST, prolog.Bytes())
 	if err != nil {
 		return req, NewResponse(req, ContentTypeText, http.StatusBadGateway, "Veidemann proxy lost connection to GRPC services"+err.Error())
 	}
@@ -303,8 +307,8 @@ func (r *RpRoundTripper) RoundTrip(req *http.Request, ctx *recordContext) (respo
 		}
 		switch e {
 		case io.EOF:
-			err.Code = 504
-			err.Msg = "GATEWAY_TIMEOUT"
+			err.Code = -4
+			err.Msg = "HTTP_TIMEOUT"
 			err.Detail = "Veidemann recorder proxy lost connection to upstream server"
 		case context.Canceled:
 			err.Code = -5011

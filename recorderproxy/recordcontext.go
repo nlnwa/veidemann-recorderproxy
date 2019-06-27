@@ -132,7 +132,7 @@ func (ctx *recordContext) init(req *http.Request) *recordContext {
 				return
 			}
 			if err != nil {
-				ctx.Logf("unknown error from browser controller %v, %v\n", doReply, err)
+				ctx.Warnf("unknown error from browser controller %v, %v\n", doReply, err)
 				ctx.bccMsgChan <- doReply
 				close(ctx.bccMsgChan)
 				ctx.Close()
@@ -164,51 +164,51 @@ func (ctx *recordContext) init(req *http.Request) *recordContext {
 	return ctx
 }
 
-func (r *recordContext) saveCrawlLog(crawlLog *frontier.CrawlLog) {
-	if r.closed {
+func (ctx *recordContext) saveCrawlLog(crawlLog *frontier.CrawlLog) {
+	if ctx.closed {
 		return
 	}
-	err := r.bcc.Send(&browsercontroller.DoRequest{
+	err := ctx.bcc.Send(&browsercontroller.DoRequest{
 		Action: &browsercontroller.DoRequest_Completed{
 			Completed: &browsercontroller.Completed{
 				CrawlLog: crawlLog,
-				Cached:   r.foundInCache,
+				Cached:   ctx.foundInCache,
 			},
 		},
 	})
-	r.handleErr("Error sending crawl log to browser controller", err)
+	ctx.handleErr("Error sending crawl log to browser controller", err)
 }
 
-func (r *recordContext) SendUnknownError(err error) {
-	r.SendErrorCode(-5, "RecorderProxy internal failure", err.Error())
+func (ctx *recordContext) SendUnknownError(err error) {
+	ctx.SendErrorCode(-5, "RecorderProxy internal failure", err.Error())
 }
 
-func (r *recordContext) SendErrorCode(code int32, msg string, detail string) {
-	r.SendError(&commons.Error{
+func (ctx *recordContext) SendErrorCode(code int32, msg string, detail string) {
+	ctx.SendError(&commons.Error{
 		Code:   code,
 		Msg:    msg,
 		Detail: detail,
 	})
 }
 
-func (r *recordContext) SendError(err *commons.Error) {
-	if r.closed {
+func (ctx *recordContext) SendError(err *commons.Error) {
+	if ctx.closed {
 		return
 	}
-	defer r.Close()
-	if r.crawlLog != nil {
-		cl := r.crawlLog
+	defer ctx.Close()
+	if ctx.crawlLog != nil {
+		cl := ctx.crawlLog
 		if cl.FetchTimeMs == 0 {
-			cl.FetchTimeMs = time.Now().Sub(r.FetchTimesTamp).Nanoseconds() / 1000000
+			cl.FetchTimeMs = time.Now().Sub(ctx.FetchTimesTamp).Nanoseconds() / 1000000
 		}
 		cl.StatusCode = err.Code
 		if cl.RecordType == "" {
 			cl.RecordType = strings.ToLower("response")
 		}
 		cl.Error = err
-		r.saveCrawlLog(cl)
+		ctx.saveCrawlLog(cl)
 	}
-	e := r.cwc.Send(&contentwriter.WriteRequest{Value: &contentwriter.WriteRequest_Cancel{Cancel: err.Detail}})
+	e := ctx.cwc.Send(&contentwriter.WriteRequest{Value: &contentwriter.WriteRequest_Cancel{Cancel: err.Detail}})
 	if e != nil {
 		s, ok := status.FromError(e)
 		if ok && s.Code() == codes.Internal && s.Message() == "SendMsg called after CloseSend" {
@@ -220,43 +220,43 @@ func (r *recordContext) SendError(err *commons.Error) {
 	}
 }
 
-func (r *recordContext) handleErr(msg string, err error) bool {
+func (ctx *recordContext) handleErr(msg string, err error) bool {
 	if err != nil {
 		log.Warnf("%s, cause: %v", msg, err)
-		defer r.Close()
+		defer ctx.Close()
 		return true
 	}
 	return false
 }
 
-func (r *recordContext) Close() {
-	if r.closed {
+func (ctx *recordContext) Close() {
+	if ctx.closed {
 		return
 	}
-	r.closed = true
-	r.bcc.CloseSend()
-	r.cwc.CloseAndRecv()
-	if r.cwcCancelFunc != nil {
-		r.cwcCancelFunc()
+	ctx.closed = true
+	ctx.bcc.CloseSend()
+	ctx.cwc.CloseAndRecv()
+	if ctx.cwcCancelFunc != nil {
+		ctx.cwcCancelFunc()
 	}
 }
 
-func (r *recordContext) printf(msg string, argv ...interface{}) {
-	r.proxy.Logger.Printf("[%03d] "+msg+"\n", append([]interface{}{r.session & 0xFF}, argv...)...)
+func (ctx *recordContext) printf(msg string, argv ...interface{}) {
+	ctx.proxy.Logger.Printf("[%03d] "+msg+"\n", append([]interface{}{ctx.session & 0xFF}, argv...)...)
 }
 
 // Logf prints a message to the proxy's log. Should be used in a ProxyHttpServer's filter
 // This message will be printed only if the Verbose field of the ProxyHttpServer is set to true
-func (r *recordContext) Logf(msg string, argv ...interface{}) {
-	if r.proxy.Verbose {
-		r.printf("INFO: "+msg, argv...)
+func (ctx *recordContext) Logf(msg string, argv ...interface{}) {
+	if ctx.proxy.Verbose {
+		ctx.printf("INFO: "+msg, argv...)
 	}
 }
 
 // Warnf prints a message to the proxy's log. Should be used in a ProxyHttpServer's filter
 // This message will always be printed.
-func (r *recordContext) Warnf(msg string, argv ...interface{}) {
-	r.printf("WARN: "+msg, argv...)
+func (ctx *recordContext) Warnf(msg string, argv ...interface{}) {
+	ctx.printf("WARN: "+msg, argv...)
 }
 
 var charsetFinder = regexp.MustCompile("charset=([^ ;]*)")
@@ -264,8 +264,8 @@ var charsetFinder = regexp.MustCompile("charset=([^ ;]*)")
 // Will try to infer the character set of the request from the headers.
 // Returns the empty string if we don't know which character set it used.
 // Currently it will look for charset=<charset> in the Content-Type header of the request.
-func (r *recordContext) Charset() string {
-	charsets := charsetFinder.FindStringSubmatch(r.Resp.Header.Get("Content-Type"))
+func (ctx *recordContext) Charset() string {
+	charsets := charsetFinder.FindStringSubmatch(ctx.Resp.Header.Get("Content-Type"))
 	if charsets == nil {
 		return ""
 	}

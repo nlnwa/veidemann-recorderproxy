@@ -586,15 +586,15 @@ func (test *test) generateServerTimeoutRequests(u *url.URL, p int) {
 			Action: &browsercontrollerV1.DoRequest_Completed{
 				Completed: &browsercontrollerV1.Completed{
 					CrawlLog: &frontier.CrawlLog{
-						StatusCode:     504,
+						StatusCode:     -4,
 						RequestedUri:   test.url,
 						RecordType:     "response",
 						IpAddress:      "1.2.1.2",
 						ExecutionId:    "eid",
 						JobExecutionId: "jid",
 						Error: &commons.Error{
-							Code:   504,
-							Msg:    "GATEWAY_TIMEOUT",
+							Code:   -4,
+							Msg:    "HTTP_TIMEOUT",
 							Detail: "Veidemann recorder proxy lost connection to upstream server",
 						},
 					},
@@ -695,6 +695,22 @@ func (test *test) generateBlockedByRobotsTxtRequests(u *url.URL, p int) {
 	r.BrowserControllerRequests = []*browsercontrollerV1.DoRequest{
 		{
 			Action: &browsercontrollerV1.DoRequest_New{New: &browsercontrollerV1.RegisterNew{Uri: test.url}},
+		},
+		{
+			Action: &browsercontrollerV1.DoRequest_Completed{
+				Completed: &browsercontrollerV1.Completed{
+					CrawlLog: &frontier.CrawlLog{
+						StatusCode:   -9998,
+						RequestedUri: test.url,
+						RecordType:   "response",
+						Error: &commons.Error{
+							Code:   -9998,
+							Msg:    "PRECLUDED_BY_ROBOTS",
+							Detail: "Robots.txt rules precluded fetch",
+						},
+					},
+				},
+			},
 		},
 	}
 
@@ -941,6 +957,11 @@ func compareCW(t *testing.T, serviceName string, tt test, want []*contentwriterV
 	// If last request is a cancel request, then we don't care about the others
 	lastWant := want[len(want)-1].Value
 	if _, ok := lastWant.(*contentwriterV1.WriteRequest_Cancel); ok {
+		if len(got) == 0 {
+			t.Errorf("%s service got wrong cwcCancelFunc request.  %s request #%d\nWas:\n%v\nWant:\n%v", serviceName, serviceName,
+				len(got), "Nothing", printRequest(lastWant))
+			return
+		}
 		lastGot := got[len(got)-1].Value
 		if requestsEqual(lastGot, lastWant) {
 			return
@@ -1348,7 +1369,7 @@ func (s *GrpcServiceMock) Do(server browsercontrollerV1.BrowserController_DoServ
 						Cancel: "Blocked by robots.txt",
 					},
 				})
-				return nil
+				break
 			}
 
 			reply := &browsercontrollerV1.DoReply{
