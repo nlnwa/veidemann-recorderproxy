@@ -224,6 +224,7 @@ func (proxy *RecorderProxy) handleTunneledRequest(proxyClient net.Conn, rawClien
 }
 
 func httpError(w io.WriteCloser, ctx *recordContext, err error) {
+	ctx.Logf("Got error %s, sending 502 to client", err)
 	if _, err := io.WriteString(w, "HTTP/1.1 502 Bad Gateway\r\n\r\n"); err != nil {
 		ctx.Warnf("Error responding to client: %s", err)
 	}
