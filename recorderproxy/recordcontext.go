@@ -81,7 +81,7 @@ func (ctx *recordContext) init(req *http.Request) *recordContext {
 	cwcCtx, cwcCancel := context.WithTimeout(context.Background(), ctx.proxy.ConnectionTimeout)
 	cwc, err := ctx.proxy.conn.ContentWriterClient().Write(cwcCtx)
 	if err != nil {
-		log.Fatalf("Error connecting to content writer, cause: %v", err)
+		ctx.Warnf("Error connecting to content writer, cause: %v", err)
 		cwcCancel()
 		return nil
 	}
@@ -89,7 +89,8 @@ func (ctx *recordContext) init(req *http.Request) *recordContext {
 	bccCtx, bccCancel := context.WithTimeout(context.Background(), ctx.proxy.ConnectionTimeout)
 	bcc, err := ctx.proxy.conn.BrowserControllerClient().Do(bccCtx)
 	if err != nil {
-		log.Fatalf("Error connecting to browser controller, cause: %v", err)
+		ctx.Warnf("Error connecting to browser controller, cause: %v", err)
+		cwcCancel()
 		bccCancel()
 		return nil
 	}

@@ -29,7 +29,6 @@ import (
 	"github.com/nlnwa/veidemann-api-go/contentwriter/v1"
 	"github.com/nlnwa/veidemann-api-go/dnsresolver/v1"
 	"github.com/nlnwa/veidemann-api-go/frontier/v1"
-	"github.com/spf13/viper"
 	"io"
 	"io/ioutil"
 	"regexp"
@@ -80,7 +79,7 @@ type RecorderProxy struct {
 	ConnectDial func(network string, addr string) (net.Conn, error)
 }
 
-func NewRecorderProxy(port int, conn Connections, connectionTimeout time.Duration) *RecorderProxy {
+func NewRecorderProxy(port int, conn Connections, connectionTimeout time.Duration, cache string) *RecorderProxy {
 	r := &RecorderProxy{
 		id:                proxyCount,
 		conn:              conn,
@@ -93,7 +92,6 @@ func NewRecorderProxy(port int, conn Connections, connectionTimeout time.Duratio
 		RoundTripper: NewRpRoundTripper(),
 	}
 
-	cache := viper.GetString("cache")
 	if cache != "" {
 		cu, _ := url.Parse("http://" + cache)
 		r.RoundTripper.Proxy = http.ProxyURL(cu)
@@ -399,50 +397,6 @@ func (proxy *RecorderProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method == "CONNECT" {
 		proxy.handleHttps(w, r)
 	} else {
-		ctx := NewRecordContext(proxy)
-		ctx.init(r)
-
-		var err error
-		ctx.Logf("Got request on proxy #%v, port %v for %s %s\n", proxy.id, proxy.addr, r.Method, r.URL.String())
-		if !r.URL.IsAbs() {
-			proxy.NonproxyHandler.ServeHTTP(w, r)
-			return
-		}
-		r, resp := proxy.filterRequest(r, ctx)
-
-		if resp == nil {
-			removeProxyHeaders(ctx, r)
-			resp, err = proxy.RoundTripper.RoundTrip(r, ctx)
-			if err != nil {
-				ctx.Error = err
-				resp = proxy.filterResponse(nil, ctx)
-				if resp == nil {
-					ctx.Logf("error read response %v %v:", r.URL.Host, err.Error())
-					http.Error(w, err.Error(), 500)
-					return
-				}
-			}
-			ctx.Logf("Received response %v", resp.Status)
-		}
-		origBody := resp.Body
-		resp = proxy.filterResponse(resp, ctx)
-		defer origBody.Close()
-		ctx.Logf("Copying response to client %v [%d]", resp.Status, resp.StatusCode)
-		// http.ResponseWriter will take care of filling the correct response length
-		// Setting it now, might impose wrong value, contradicting the actual new
-		// body the user returned.
-		// We keep the original body to remove the header only if things changed.
-		// This will prevent problems with HEAD requests where there's no body, yet,
-		// the Content-Length header should be set.
-		if origBody != resp.Body {
-			resp.Header.Del("Content-Length")
-		}
-		copyHeaders(w.Header(), resp.Header, proxy.KeepDestinationHeaders)
-		w.WriteHeader(resp.StatusCode)
-		nr, err := io.Copy(w, resp.Body)
-		if err := resp.Body.Close(); err != nil {
-			ctx.Warnf("Can't close response body %v", err)
-		}
-		ctx.Logf("Copied %v bytes to client error=%v", nr, err)
+		proxy.handleHttp(w, r)
 	}
 }

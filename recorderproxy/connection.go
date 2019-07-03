@@ -21,8 +21,8 @@ import (
 	browsercontrollerV1 "github.com/nlnwa/veidemann-api-go/browsercontroller/v1"
 	contentwriterV1 "github.com/nlnwa/veidemann-api-go/contentwriter/v1"
 	dnsresolverV1 "github.com/nlnwa/veidemann-api-go/dnsresolver/v1"
+	log "github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
-	"log"
 	"time"
 )
 
@@ -59,7 +59,7 @@ func (c *connections) Connect(contentWriterAddr string, dnsResolverAddr string, 
 	// Set up ContentWriterClient
 	clientConn, err := grpc.DialContext(dialCtx, contentWriterAddr, opts...)
 	if err != nil {
-		log.Fatalf("fail to dial contentwriter at %v: %v", contentWriterAddr, err)
+		log.Errorf("fail to dial contentwriter at %v: %v", contentWriterAddr, err)
 		return err
 	}
 	c.contentWriterClientConn = clientConn
@@ -70,7 +70,7 @@ func (c *connections) Connect(contentWriterAddr string, dnsResolverAddr string, 
 	// Set up DnsResolverClient
 	clientConn, err = grpc.DialContext(dialCtx, dnsResolverAddr, opts...)
 	if err != nil {
-		log.Fatalf("fail to dial dns resolver at %v: %v", dnsResolverAddr, err)
+		log.Errorf("fail to dial dns resolver at %v: %v", dnsResolverAddr, err)
 		return err
 	}
 	c.dnsResolverClientConn = clientConn
@@ -81,7 +81,7 @@ func (c *connections) Connect(contentWriterAddr string, dnsResolverAddr string, 
 	// Set up BrowserControllerClient
 	clientConn, err = grpc.DialContext(dialCtx, browserControllerAddr, opts...)
 	if err != nil {
-		log.Fatalf("fail to dial browser controller at %v: %v", browserControllerAddr, err)
+		log.Errorf("fail to dial browser controller at %v: %v", browserControllerAddr, err)
 		return err
 	}
 	c.browserControllerClientConn = clientConn

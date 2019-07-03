@@ -31,9 +31,6 @@ var (
 	RecorderProxyCa         tls.Certificate
 	err                     error
 )
-var defaultTLSConfig = &tls.Config{
-	InsecureSkipVerify: true,
-}
 
 var caCert = []byte(`-----BEGIN CERTIFICATE-----
 MIIB8jCCAZmgAwIBAgIUQVlggOJ1FJzPWdBCQARPSc/3H78wCgYIKoZIzj0EAwIw
@@ -85,7 +82,9 @@ func TLSConfigFromCA() func(host string, ctx *recordContext) (*tls.Config, error
 		var cert *tls.Certificate
 
 		hostname := stripPort(host)
-		config := *defaultTLSConfig
+		config := tls.Config{
+			InsecureSkipVerify: true,
+		}
 		ctx.Logf("signing for %s", stripPort(host))
 
 		cert, err = RecorderProxyCertCache.Get(hostname, ctx)

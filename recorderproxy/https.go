@@ -79,13 +79,17 @@ func (proxy *RecorderProxy) handleHttps(w http.ResponseWriter, r *http.Request) 
 	// still handling the request even after hijacking the connection. Those HTTP CONNECT
 	// request can take forever, and the server will be stuck when "closed".
 	// TODO: Allow Server.Close() mechanism to shut down this connection as nicely as possible
-	tlsConfig := defaultTLSConfig
+	var tlsConfig *tls.Config
 	if TLSConfig != nil {
 		var err error
 		tlsConfig, err = TLSConfig(host, ctx)
 		if err != nil {
 			httpError(proxyClient, ctx, err)
 			return
+		}
+	} else {
+		tlsConfig = &tls.Config{
+			InsecureSkipVerify: true,
 		}
 	}
 
@@ -101,94 +105,122 @@ func (proxy *RecorderProxy) handleHttps(w http.ResponseWriter, r *http.Request) 
 					ctx.Warnf("Cannot write response that reject http CONNECT: %v", err)
 				}
 			}
-			proxyClient.Close()
+			defer func() {
+				e := proxyClient.Close()
+				if e != nil {
+					ctx.Logf("Error while closing proxy client: %v\n", e)
+				}
+			}()
 
 			return
 		}
-		defer rawClientTls.Close()
+		defer func() {
+			e := rawClientTls.Close()
+			if e != nil {
+				ctx.Logf("Error while closing raw client Tls: %v\n", e)
+			}
+		}()
 		clientTlsReader := bufio.NewReader(rawClientTls)
 		for !isEof(clientTlsReader) {
-			req, err := http.ReadRequest(clientTlsReader)
-			ctx := NewRecordContext(proxy)
-			ctx.init(req)
-			if err != nil && err != io.EOF {
-				return
-			}
-			if err != nil {
-				ctx.Warnf("Cannot read TLS request from mitm'd client %v %v", r.Host, err)
-				return
-			}
-			req.RemoteAddr = r.RemoteAddr // since we're converting the request, need to carry over the original connecting IP as well
-			ctx.Logf("req %v", r.Host)
-
-			if !httpsRegexp.MatchString(req.URL.String()) {
-				req.URL, err = url.Parse("https://" + r.Host + req.URL.String())
-			}
-
-			ctx.Req = req
-
-			req, resp := proxy.filterRequest(req, ctx)
-			if resp == nil {
-				if err != nil {
-					ctx.Warnf("Illegal URL %s", "https://"+r.Host+req.URL.Path)
-					return
-				}
-				removeProxyHeaders(ctx, req)
-				resp, err = ctx.proxy.RoundTripper.RoundTrip(req, ctx)
-				if err != nil {
-					ctx.Warnf("Cannot read TLS response from mitm'd server %v", err)
-					if err.Error() == "Connect failed" {
-						proxyClient.Close()
-					}
-					return
-				}
-				ctx.Logf("resp %v", resp.Status)
-			}
-			resp = proxy.filterResponse(resp, ctx)
-			defer resp.Body.Close()
-
-			text := resp.Status
-			statusCode := strconv.Itoa(resp.StatusCode) + " "
-			if strings.HasPrefix(text, statusCode) {
-				text = text[len(statusCode):]
-			}
-			// always use 1.1 to support chunked encoding
-			if _, err := io.WriteString(rawClientTls, "HTTP/1.1"+" "+statusCode+text+"\r\n"); err != nil {
-				ctx.Warnf("Cannot write TLS response HTTP status from mitm'd client: %v", err)
-				return
-			}
-			// Since we don't know the length of resp, return chunked encoded response
-			// TODO: use a more reasonable scheme
-			resp.Header.Del("Content-Length")
-			resp.Header.Set("Transfer-Encoding", "chunked")
-			// Force connection close otherwise chrome will keep CONNECT tunnel open forever
-			resp.Header.Set("Connection", "close")
-			if err := resp.Header.Write(rawClientTls); err != nil {
-				ctx.Warnf("Cannot write TLS response header from mitm'd client: %v", err)
-				ctx.SendErrorCode(-5011, "CANCELED_BY_BROWSER", "Veidemann recorder proxy lost connection to client")
-
-				return
-			}
-			if _, err = io.WriteString(rawClientTls, "\r\n"); err != nil {
-				ctx.Warnf("Cannot write TLS response header end from mitm'd client: %v", err)
-				return
-			}
-			chunked := newChunkedWriter(rawClientTls)
-			if _, err := io.Copy(chunked, resp.Body); err != nil {
-				ctx.Warnf("Cannot write TLS response body from mitm'd client: %v", err)
-				return
-			}
-			if err := chunked.Close(); err != nil {
-				ctx.Warnf("Cannot write TLS chunked EOF from mitm'd client: %v", err)
-				return
-			}
-			if _, err = io.WriteString(rawClientTls, "\r\n"); err != nil {
-				ctx.Warnf("Cannot write TLS response chunked trailer from mitm'd client: %v", err)
+			if !proxy.handleTunneledRequest(proxyClient, rawClientTls, clientTlsReader, r) {
 				return
 			}
 		}
 		ctx.Logf("Exiting on EOF")
 	}()
+}
+
+func (proxy *RecorderProxy) handleTunneledRequest(proxyClient net.Conn, rawClientTls *tls.Conn, clientTlsReader *bufio.Reader, connectReq *http.Request) (ok bool) {
+	req, err := http.ReadRequest(clientTlsReader)
+	ctx := NewRecordContext(proxy)
+	ctx.init(req)
+	if err != nil && err != io.EOF {
+		return
+	}
+	if err != nil {
+		ctx.Warnf("Cannot read TLS request from mitm'd client %v %v", connectReq.Host, err)
+		return
+	}
+	req.RemoteAddr = connectReq.RemoteAddr // since we're converting the request, need to carry over the original connecting IP as well
+	ctx.Logf("req %v", connectReq.Host)
+
+	if !httpsRegexp.MatchString(req.URL.String()) {
+		req.URL, err = url.Parse("https://" + connectReq.Host + req.URL.String())
+	}
+
+	ctx.Req = req
+
+	req, resp := proxy.filterRequest(req, ctx)
+	if resp == nil {
+		if err != nil {
+			ctx.Warnf("Illegal URL https://%s%s", connectReq.Host, req.URL.Path)
+			return
+		}
+		removeProxyHeaders(ctx, req)
+		resp, err = ctx.proxy.RoundTripper.RoundTrip(req, ctx)
+		if err != nil {
+			ctx.Warnf("Cannot read TLS response from mitm'd server %v", err)
+			if err.Error() == "Connect failed" {
+				defer func() {
+					e := proxyClient.Close()
+					if e != nil {
+						ctx.Logf("Error while closing proxy client: %v\n", e)
+					}
+				}()
+			}
+			return
+		}
+		ctx.Logf("resp %v", resp.Status)
+	}
+	resp = proxy.filterResponse(resp, ctx)
+	defer func() {
+		e := resp.Body.Close()
+		if e != nil {
+			ctx.Warnf("Error while closing body: %v\n", e)
+		}
+	}()
+
+	text := resp.Status
+	statusCode := strconv.Itoa(resp.StatusCode) + " "
+	if strings.HasPrefix(text, statusCode) {
+		text = text[len(statusCode):]
+	}
+	// always use 1.1 to support chunked encoding
+	if _, err := io.WriteString(rawClientTls, "HTTP/1.1"+" "+statusCode+text+"\r\n"); err != nil {
+		ctx.Warnf("Cannot write TLS response HTTP status from mitm'd client: %v", err)
+		return
+	}
+	// Since we don't know the length of resp, return chunked encoded response
+	// TODO: use a more reasonable scheme
+	resp.Header.Del("Content-Length")
+	resp.Header.Set("Transfer-Encoding", "chunked")
+	// Force connection close otherwise chrome will keep CONNECT tunnel open forever
+	resp.Header.Set("Connection", "close")
+	if err := resp.Header.Write(rawClientTls); err != nil {
+		ctx.Warnf("Cannot write TLS response header from mitm'd client: %v", err)
+		ctx.SendErrorCode(-5011, "CANCELED_BY_BROWSER", "Veidemann recorder proxy lost connection to client")
+
+		return
+	}
+	if _, err = io.WriteString(rawClientTls, "\r\n"); err != nil {
+		ctx.Warnf("Cannot write TLS response header end from mitm'd client: %v", err)
+		return
+	}
+	chunked := newChunkedWriter(rawClientTls)
+	if _, err := io.Copy(chunked, resp.Body); err != nil {
+		ctx.Warnf("Cannot write TLS response body from mitm'd client: %v", err)
+		return
+	}
+	if err := chunked.Close(); err != nil {
+		ctx.Warnf("Cannot write TLS chunked EOF from mitm'd client: %v", err)
+		return
+	}
+	if _, err = io.WriteString(rawClientTls, "\r\n"); err != nil {
+		ctx.Warnf("Cannot write TLS response chunked trailer from mitm'd client: %v", err)
+		return
+	}
+
+	return true
 }
 
 func httpError(w io.WriteCloser, ctx *recordContext, err error) {
@@ -200,12 +232,12 @@ func httpError(w io.WriteCloser, ctx *recordContext, err error) {
 	}
 }
 
-func (proxy *RecorderProxy) NewConnectDialToProxy(https_proxy string) func(network, addr string) (net.Conn, error) {
-	return proxy.NewConnectDialToProxyWithHandler(https_proxy, nil)
+func (proxy *RecorderProxy) NewConnectDialToProxy(httpsProxy string) func(network, addr string) (net.Conn, error) {
+	return proxy.NewConnectDialToProxyWithHandler(httpsProxy, nil)
 }
 
-func (proxy *RecorderProxy) NewConnectDialToProxyWithHandler(https_proxy string, connectReqHandler func(req *http.Request)) func(network, addr string) (net.Conn, error) {
-	u, err := url.Parse(https_proxy)
+func (proxy *RecorderProxy) NewConnectDialToProxyWithHandler(httpsProxy string, connectReqHandler func(req *http.Request)) func(network, addr string) (net.Conn, error) {
+	u, err := url.Parse(httpsProxy)
 	if err != nil {
 		return nil
 	}

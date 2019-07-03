@@ -42,12 +42,13 @@ func main() {
 		log.Fatalf("Could not connect to services: %v", err)
 	}
 
-	fmt.Printf("Using cache at %s\n", viper.GetString("cache"))
+	cache := viper.GetString("cache")
+	fmt.Printf("Using cache at %s\n", cache)
 
 	firstPort := viper.GetInt("port")
 	proxyCount := viper.GetInt("proxy-count")
 	for i := firstPort; i < (firstPort + proxyCount); i++ {
-		r := recorderproxy.NewRecorderProxy(i, conn, timeout)
+		r := recorderproxy.NewRecorderProxy(i, conn, timeout, cache)
 		r.SetVerbose(*verbose)
 		r.Start()
 	}
