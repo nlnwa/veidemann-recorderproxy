@@ -159,7 +159,7 @@ func (proxy *RecorderProxy) handleTunneledRequest(proxyClient net.Conn, rawClien
 		removeProxyHeaders(ctx, req)
 		resp, err = ctx.proxy.RoundTripper.RoundTrip(req, ctx)
 		if err != nil {
-			ctx.Warnf("Cannot read TLS response from mitm'd server %v", err)
+			ctx.Warnf("Cannot read TLS response from mitm'd server %v, URL: %s", err, req.URL)
 			if err.Error() == "Connect failed" {
 				defer func() {
 					e := proxyClient.Close()
@@ -187,7 +187,7 @@ func (proxy *RecorderProxy) handleTunneledRequest(proxyClient net.Conn, rawClien
 	}
 	// always use 1.1 to support chunked encoding
 	if _, err := io.WriteString(rawClientTls, "HTTP/1.1"+" "+statusCode+text+"\r\n"); err != nil {
-		ctx.Warnf("Cannot write TLS response HTTP status from mitm'd client: %v", err)
+		ctx.Warnf("Cannot write TLS response HTTP status from mitm'd client: %v, URL: %s", err, req.URL)
 		return
 	}
 	// Since we don't know the length of resp, return chunked encoded response
@@ -197,26 +197,26 @@ func (proxy *RecorderProxy) handleTunneledRequest(proxyClient net.Conn, rawClien
 	// Force connection close otherwise chrome will keep CONNECT tunnel open forever
 	resp.Header.Set("Connection", "close")
 	if err := resp.Header.Write(rawClientTls); err != nil {
-		ctx.Warnf("Cannot write TLS response header from mitm'd client: %v", err)
+		ctx.Warnf("Cannot write TLS response header from mitm'd client: %v, URL: %s", err, req.URL)
 		ctx.SendErrorCode(-5011, "CANCELED_BY_BROWSER", "Veidemann recorder proxy lost connection to client")
 
 		return
 	}
 	if _, err = io.WriteString(rawClientTls, "\r\n"); err != nil {
-		ctx.Warnf("Cannot write TLS response header end from mitm'd client: %v", err)
+		ctx.Warnf("Cannot write TLS response header end from mitm'd client: %v, URL: %s", err, req.URL)
 		return
 	}
 	chunked := newChunkedWriter(rawClientTls)
 	if _, err := io.Copy(chunked, resp.Body); err != nil {
-		ctx.Warnf("Cannot write TLS response body from mitm'd client: %v", err)
+		ctx.Warnf("Cannot write TLS response body from mitm'd client: %v, URL: %s", err, req.URL)
 		return
 	}
 	if err := chunked.Close(); err != nil {
-		ctx.Warnf("Cannot write TLS chunked EOF from mitm'd client: %v", err)
+		ctx.Warnf("Cannot write TLS chunked EOF from mitm'd client: %v, URL: %s", err, req.URL)
 		return
 	}
 	if _, err = io.WriteString(rawClientTls, "\r\n"); err != nil {
-		ctx.Warnf("Cannot write TLS response chunked trailer from mitm'd client: %v", err)
+		ctx.Warnf("Cannot write TLS response chunked trailer from mitm'd client: %v, URL: %s", err, req.URL)
 		return
 	}
 
