@@ -95,7 +95,7 @@ func NewRecorderProxy(port int, conn Connections, connectionTimeout time.Duratio
 	if cache != "" {
 		cu, _ := url.Parse("http://" + cache)
 		r.RoundTripper.Proxy = http.ProxyURL(cu)
-		r.ConnectDial = r.NewConnectDialToProxy(cache)
+		//r.ConnectDial = r.NewConnectDialToProxy(cache)
 	}
 
 	r.Logger = log.New(os.Stderr, "", log.LstdFlags)
@@ -241,6 +241,11 @@ func (proxy *RecorderProxy) filterResponse(respOrig *http.Response, ctx *recordC
 		return resp
 	}
 
+	if ctx.Error != nil && strings.HasPrefix(ctx.Error.Error(), "unknown error from browser controller") {
+		ctx.Close()
+		return resp
+	}
+
 	if strings.Contains(resp.Header.Get("X-Cache-Lookup"), "HIT") {
 		ctx.foundInCache = true
 
@@ -249,6 +254,7 @@ func (proxy *RecorderProxy) filterResponse(respOrig *http.Response, ctx *recordC
 
 	var prolog bytes.Buffer
 	writeResponseProlog(resp, &prolog)
+
 	contentType := resp.Header.Get("Content-Type")
 	statusCode := int32(resp.StatusCode)
 	var err error
@@ -258,6 +264,9 @@ func (proxy *RecorderProxy) filterResponse(respOrig *http.Response, ctx *recordC
 		return NewResponse(resp.Request, ContentTypeText, http.StatusBadGateway, "Veidemann proxy lost connection to GRPC services\n"+err.Error())
 	}
 
+	if ctx.replacementScript != nil {
+		resp.ContentLength = int64(len(ctx.replacementScript.Script))
+	}
 	resp.Body = bodyWrapper
 
 	return resp
@@ -297,6 +306,24 @@ func (r *RpRoundTripper) RoundTrip(req *http.Request, ctx *recordContext) (respo
 	response, e = r.Transport.RoundTrip(req)
 
 	if e != nil {
+		handleResponseError(e, ctx)
+	} else {
+		if strings.Contains(response.Header.Get("X-Squid-Error"), "ERR_CONNECT_FAIL") {
+			err := &commons.Error{}
+			err.Code = -2
+			err.Msg = "CONNECT_FAILED"
+			err.Detail = "Failed to establish tls connection"
+			ctx.SendError(err)
+
+			e = errors.New("Connect failed")
+		}
+	}
+
+	return
+}
+
+func handleResponseError(e error, ctx *recordContext) {
+	if e != nil {
 		err := &commons.Error{}
 		if ctx.Error != nil {
 			err.Detail = ctx.Error.Error()
@@ -328,24 +355,19 @@ func (r *RpRoundTripper) RoundTrip(req *http.Request, ctx *recordContext) (respo
 					err.Msg = "RUNTIME_EXCEPTION"
 				}
 			default:
-				err.Code = -5
-				err.Msg = "RUNTIME_EXCEPTION"
+				switch {
+				case e.Error() == "Bad Gateway":
+					err.Code = -2
+					err.Msg = "CONNECT_FAILED"
+					err.Detail = e.Error()
+				default:
+					err.Code = -5
+					err.Msg = "RUNTIME_EXCEPTION"
+				}
 			}
 		}
 		ctx.SendError(err)
-	} else {
-		if strings.Contains(response.Header.Get("X-Squid-Error"), "ERR_CONNECT_FAIL") {
-			err := &commons.Error{}
-			err.Code = -2
-			err.Msg = "CONNECT_FAILED"
-			err.Detail = "Failed to establish tls connection"
-			ctx.SendError(err)
-
-			e = errors.New("Connect failed")
-		}
 	}
-
-	return
 }
 
 var hasPort = regexp.MustCompile(`:\d+$`)
@@ -389,6 +411,7 @@ func removeProxyHeaders(ctx *recordContext, r *http.Request) {
 	//   options that are desired for that particular connection and MUST NOT
 	//   be communicated by proxies over further connections.
 	r.Header.Del("Connection")
+	r.Close = false
 }
 
 // Standard net/http function. Shouldn't be used directly, http.Serve will use it.

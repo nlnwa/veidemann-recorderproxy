@@ -18,6 +18,7 @@ package recorderproxy
 
 import (
 	"context"
+	"fmt"
 	"github.com/nlnwa/veidemann-api-go/browsercontroller/v1"
 	"github.com/nlnwa/veidemann-api-go/commons/v1"
 	"github.com/nlnwa/veidemann-api-go/config/v1"
@@ -133,11 +134,13 @@ func (ctx *recordContext) init(req *http.Request) *recordContext {
 				return
 			}
 			if err != nil {
-				ctx.Warnf("unknown error from browser controller %v, %v\n", doReply, err)
-				ctx.bccMsgChan <- doReply
+				ctx.Warnf("unknown error from browser controller %v, %v, %v\n", doReply, err, serr)
+				ctx.Error = fmt.Errorf("unknown error from browser controller: %v", err.Error())
+				ctx.bccMsgChan <- &browsercontroller.DoReply{Action: &browsercontroller.DoReply_Cancel{Cancel: ctx.Error.Error()}}
 				close(ctx.bccMsgChan)
 				ctx.Close()
 				ctx.bccCancelFunc()
+				return
 			}
 			switch doReply.Action.(type) {
 			case *browsercontroller.DoReply_Cancel:

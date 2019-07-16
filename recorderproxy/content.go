@@ -98,8 +98,9 @@ func (b *wrappedBody) Read(p []byte) (n int, err error) {
 	} else {
 		// Replace content sent to client while still storing original content
 		if b.replacementReader == nil {
+			buf := make([]byte, 64000)
 			for {
-				_, err := b.innerRead(b.ReadCloser, p)
+				_, err := b.innerRead(b.ReadCloser, buf)
 				if err == io.EOF {
 					break
 				}

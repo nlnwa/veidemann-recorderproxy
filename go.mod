@@ -2,6 +2,7 @@ module github.com/nlnwa/veidemann-recorderproxy
 
 require (
 	github.com/allegro/bigcache v0.0.0-20190618191010-69ea0af04088
+	github.com/elazarl/goproxy v0.0.0-20190711103511-473e67f1d7d2
 	github.com/golang/protobuf v1.3.1
 	github.com/grpc-ecosystem/grpc-gateway v1.9.2 // indirect
 	github.com/nlnwa/veidemann-api-go v1.0.0-beta10
