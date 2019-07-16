@@ -75,29 +75,34 @@ func NewCache(lifeWindow time.Duration, maxSizeMb int) (*CertCache, error) {
 	}, nil
 }
 
-// Put writes a DNS response to the cache
-func (c *CertCache) Put(host string, derBytes []byte, ctx *recordContext) error {
-	err = c.cache.Set(host, derBytes)
-	ctx.Logf("Certificate for host %s written to cache", host)
+// Put writes a certificate to the cache
+func (c *CertCache) Put(key string, derBytes []byte, ctx *recordContext) error {
+	err = c.cache.Set(key, derBytes)
+	ctx.Logf("Certificate for key %s written to cache", key)
 	return err
 }
 
-// Get reads a DNS response from the cahce. It returns an EntryNotFoundError when no entry exists for the given key.
-func (c *CertCache) Get(host string, ctx *recordContext) (*tls.Certificate, error) {
-	v, err, _ := c.g.Do(host, func() (interface{}, error) {
-		derBytes, err := c.cache.Get(host)
+// Get reads a certificate from the cache. It returns a new certificate when no entry exists for the given key.
+func (c *CertCache) Get(host string, remoteCert *x509.Certificate, ctx *recordContext) (*tls.Certificate, error) {
+	key := host
+	if remoteCert != nil {
+		key = remoteCert.SerialNumber.String()
+	}
+
+	v, err, _ := c.g.Do(key, func() (interface{}, error) {
+		derBytes, err := c.cache.Get(key)
 		if err == bigcache.ErrEntryNotFound {
-			ctx.Logf("Creating certificate for host %s", host)
-			derBytes, err = signHost(host)
+			ctx.Logf("Creating certificate for key %s", key)
+			derBytes, err = signHost(key, remoteCert)
 			if err != nil {
 				return nil, err
 			}
-			err = c.Put(host, derBytes, ctx)
+			err = c.Put(key, derBytes, ctx)
 			if err != nil {
 				return nil, err
 			}
 		} else {
-			ctx.Logf("Using cached certificate for host %s", host)
+			ctx.Logf("Using cached certificate for key %s", key)
 		}
 		if err != nil {
 			return nil, err
@@ -115,7 +120,7 @@ func (c *CertCache) Get(host string, ctx *recordContext) (*tls.Certificate, erro
 	return v.(*tls.Certificate), nil
 }
 
-func signHost(host string) (derBytes []byte, err error) {
+func signHost(host string, remoteCert *x509.Certificate) (derBytes []byte, err error) {
 	var x509ca *x509.Certificate
 
 	// Use the provided ca and not the global GoproxyCa for certificate generation.
@@ -123,31 +128,40 @@ func signHost(host string) (derBytes []byte, err error) {
 		return
 	}
 
-	start := time.Unix(0, 0)
-	end, err := time.Parse("2006-01-02", "2049-12-31")
-	if err != nil {
-		panic(err)
-	}
-	serial := new(big.Int)
-	serial.SetBytes([]byte(host))
-	template := x509.Certificate{
-		SerialNumber: serial,
-		Issuer:       x509ca.Subject,
-		Subject: pkix.Name{
-			Organization: []string{"GoProxy untrusted MITM proxy Inc"},
-		},
-		NotBefore: start,
-		NotAfter:  end,
-
-		KeyUsage:              x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
-		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-		BasicConstraintsValid: true,
-	}
-	if ip := net.ParseIP(host); ip != nil {
-		template.IPAddresses = append(template.IPAddresses, ip)
+	var template x509.Certificate
+	if remoteCert != nil {
+		template = *remoteCert
+		template.PublicKey = nil
+		template.PublicKeyAlgorithm = 0
+		template.Signature = nil
+		template.SignatureAlgorithm = 0
 	} else {
-		template.DNSNames = append(template.DNSNames, host)
-		template.Subject.CommonName = host
+		start := time.Unix(0, 0)
+		end, err := time.Parse("2006-01-02", "2049-12-31")
+		if err != nil {
+			panic(err)
+		}
+		serial := new(big.Int)
+		serial.SetBytes([]byte(host))
+		template = x509.Certificate{
+			SerialNumber: serial,
+			Issuer:       x509ca.Subject,
+			Subject: pkix.Name{
+				Organization: []string{"RecorderProxy untrusted MITM proxy Inc"},
+			},
+			NotBefore: start,
+			NotAfter:  end,
+
+			KeyUsage:              x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
+			ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+			BasicConstraintsValid: true,
+		}
+		if ip := net.ParseIP(host); ip != nil {
+			template.IPAddresses = append(template.IPAddresses, ip)
+		} else {
+			template.DNSNames = append(template.DNSNames, host)
+			template.Subject.CommonName = host
+		}
 	}
 
 	csprng := rand.Reader
