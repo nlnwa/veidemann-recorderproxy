@@ -20,6 +20,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"github.com/golang/protobuf/ptypes"
@@ -61,7 +62,7 @@ var proxyCount int32
 type RecorderProxy struct {
 	id                int32
 	addr              string
-	conn              Connections
+	conn              *Connections
 	ConnectionTimeout time.Duration
 
 	// session variable must be aligned in i386
@@ -76,10 +77,11 @@ type RecorderProxy struct {
 	RoundTripper    *RpRoundTripper
 
 	// ConnectDial will be used to create TCP connections for CONNECT requests
-	ConnectDial func(network string, addr string) (net.Conn, error)
+	ConnectDial       func(addr string) (*tls.Conn, error)
+	dnsResolverDialer *dnsResolverDialer
 }
 
-func NewRecorderProxy(port int, conn Connections, connectionTimeout time.Duration, cache string) *RecorderProxy {
+func NewRecorderProxy(port int, conn *Connections, connectionTimeout time.Duration, cache string) *RecorderProxy {
 	r := &RecorderProxy{
 		id:                proxyCount,
 		conn:              conn,
@@ -95,12 +97,24 @@ func NewRecorderProxy(port int, conn Connections, connectionTimeout time.Duratio
 	if cache != "" {
 		cu, _ := url.Parse("http://" + cache)
 		r.RoundTripper.Proxy = http.ProxyURL(cu)
-		//r.ConnectDial = r.NewConnectDialToProxy(cache)
 	}
 
 	r.Logger = log.New(os.Stderr, "", log.LstdFlags)
 
 	proxyCount++
+
+	if conn.dnsResolverHost != "" {
+		r.dnsResolverDialer, err = NewDnsResolverDialer(conn.dnsResolverHost, conn.dnsResolverPort)
+		if err != nil {
+			log.Fatalf("Could not create CONNECT dialer: \"%s\"", err)
+		}
+		r.ConnectDial = r.dnsResolverDialer.DialTls
+	} else {
+		r.ConnectDial = func(addr string) (conn *tls.Conn, e error) {
+			return tls.Dial("tcp", addr, &tls.Config{InsecureSkipVerify: true})
+		}
+	}
+
 	return r
 }
 
@@ -411,7 +425,6 @@ func removeProxyHeaders(ctx *recordContext, r *http.Request) {
 	//   options that are desired for that particular connection and MUST NOT
 	//   be communicated by proxies over further connections.
 	r.Header.Del("Connection")
-	r.Close = false
 }
 
 // Standard net/http function. Shouldn't be used directly, http.Serve will use it.

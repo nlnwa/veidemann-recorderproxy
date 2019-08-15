@@ -227,22 +227,22 @@ func TestGoproxyThroughProxy(t *testing.T) {
 			wantResponseBlockSize:   135,
 			wantErr:                 false,
 		},
-		//{
-		//	name:           "http:server timeout",
-		//	url:            srvHttp.URL + "/slow",
-		//	wantStatus:     0,
-		//	wantContent:    "",
-		//	wantErr:        true,
-		//	srvWriteTimout: 10 * time.Millisecond,
-		//},
-		//{
-		//	name:           "https:server timeout",
-		//	url:            srvHttps.URL + "/slow",
-		//	wantStatus:     0,
-		//	wantContent:    "",
-		//	wantErr:        true,
-		//	srvWriteTimout: 10 * time.Millisecond,
-		//},
+		{
+			name:           "http:server timeout",
+			url:            srvHttp.URL + "/slow",
+			wantStatus:     0,
+			wantContent:    "",
+			wantErr:        true,
+			srvWriteTimout: 10 * time.Millisecond,
+		},
+		{
+			name:           "https:server timeout",
+			url:            srvHttps.URL + "/slow",
+			wantStatus:     0,
+			wantContent:    "",
+			wantErr:        true,
+			srvWriteTimout: 10 * time.Millisecond,
+		},
 		{
 			name:        "http:grpc service timeout",
 			url:         srvHttp.URL + "/slow",
@@ -1219,7 +1219,7 @@ func localRecorderProxy() (client *http.Client, proxy *recorderproxy.RecorderPro
 
 	recorderproxy.SetCA("", "")
 	conn := recorderproxy.NewConnections()
-	err := conn.Connect("", "", "", 1*time.Minute, grpc.WithContextDialer(bufDialer))
+	err := conn.Connect("", "", "", "", "", "", 1*time.Minute, grpc.WithContextDialer(bufDialer))
 	if err != nil {
 		log.Fatalf("Could not connect to services: %v", err)
 	}

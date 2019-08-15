@@ -44,13 +44,14 @@ func main() {
 	}
 
 	timeout := viper.GetDuration("timeout")
-	contentWriterAddr := viper.GetString("content-writer-host") + ":" + viper.GetString("content-writer-port")
-	dnsResolverAddr := viper.GetString("dns-resolver-host") + ":" + viper.GetString("dns-resolver-port")
-	browserControllerAddr := viper.GetString("browser-controller-host") + ":" + viper.GetString("browser-controller-port")
 	cacheAddr := viper.GetString("cache-host") + ":" + viper.GetString("cache-port")
 
 	conn := recorderproxy.NewConnections()
-	err = conn.Connect(contentWriterAddr, dnsResolverAddr, browserControllerAddr, timeout)
+	err = conn.Connect(viper.GetString("content-writer-host"), viper.GetString("content-writer-port"),
+		viper.GetString("dns-resolver-host"), viper.GetString("dns-resolver-port"),
+		viper.GetString("browser-controller-host"), viper.GetString("browser-controller-port"),
+		timeout)
+
 	if err != nil {
 		log.Fatalf("Could not connect to services: %v", err)
 	}
