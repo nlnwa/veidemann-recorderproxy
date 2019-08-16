@@ -65,7 +65,7 @@ func (proxy *RecorderProxy) handleHttps(w http.ResponseWriter, connectReq *http.
 
 	go func() {
 		var remoteCert *x509.Certificate
-		remoteConn, remoteConnErr := tls.Dial("tcp", connectReq.Host, &tls.Config{InsecureSkipVerify: true})
+		remoteConn, remoteConnErr := proxy.ConnectDial(connectReq.Host)
 		if remoteConnErr != nil {
 			ctx.Warnf("Cannot handshake remote server %v %v", connectReq.Host, remoteConnErr)
 		}

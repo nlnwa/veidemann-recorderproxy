@@ -48,7 +48,7 @@ type recordContext struct {
 	session int64
 	proxy   *RecorderProxy
 
-	conn              Connections
+	conn              *Connections
 	cwcCancelFunc     context.CancelFunc
 	cwc               contentwriter.ContentWriter_WriteClient
 	bcc               browsercontroller.BrowserController_DoClient

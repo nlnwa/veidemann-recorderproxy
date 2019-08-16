@@ -26,16 +26,14 @@ import (
 	"time"
 )
 
-type Connections interface {
-	Connect(contentWriterAddr string, dnsResolverAddr string, browserControllerAddr string, connectionTimeout time.Duration, opts ...grpc.DialOption) error
-	Close()
-	ContentWriterClient() contentwriterV1.ContentWriterClient
-	DnsResolverClient() dnsresolverV1.DnsResolverClient
-	BrowserControllerClient() browsercontrollerV1.BrowserControllerClient
-}
-
 // Connections holds the clients for external grpc services
-type connections struct {
+type Connections struct {
+	contentWriterHost           string
+	contentWriterPort           string
+	dnsResolverHost             string
+	dnsResolverPort             string
+	browserControllerHost       string
+	browserControllerPort       string
 	contentWriterClientConn     *grpc.ClientConn
 	contentWriterClient         contentwriterV1.ContentWriterClient
 	dnsResolverClientConn       *grpc.ClientConn
@@ -44,11 +42,23 @@ type connections struct {
 	browserControllerClient     browsercontrollerV1.BrowserControllerClient
 }
 
-func NewConnections() *connections {
-	return &connections{}
+func NewConnections() *Connections {
+	return &Connections{}
 }
 
-func (c *connections) Connect(contentWriterAddr string, dnsResolverAddr string, browserControllerAddr string, connectTimeout time.Duration, opts ...grpc.DialOption) error {
+func (c *Connections) Connect(contentWriterHost, contentWriterPort, dnsResolverHost, dnsResolverPort, browserControllerHost, browserControllerPort string, connectTimeout time.Duration, opts ...grpc.DialOption) error {
+	c.contentWriterHost = contentWriterHost
+	c.contentWriterPort = contentWriterPort
+	contentWriterAddr := contentWriterHost + ":" + contentWriterPort
+
+	c.dnsResolverHost = dnsResolverHost
+	c.dnsResolverPort = dnsResolverPort
+	dnsResolverAddr := dnsResolverHost + ":" + dnsResolverPort
+
+	c.browserControllerHost = browserControllerHost
+	c.browserControllerPort = browserControllerPort
+	browserControllerAddr := browserControllerHost + ":" + browserControllerPort
+
 	log.Printf("Proxy is using contentwriter at: %s, dns resolver at: %s and browser controller at: %s", contentWriterAddr, dnsResolverAddr, browserControllerAddr)
 
 	opts = append(opts, grpc.WithInsecure(), grpc.WithBlock())
@@ -92,20 +102,20 @@ func (c *connections) Connect(contentWriterAddr string, dnsResolverAddr string, 
 	return nil
 }
 
-func (c *connections) Close() {
+func (c *Connections) Close() {
 	_ = c.contentWriterClientConn.Close()
 	_ = c.dnsResolverClientConn.Close()
 	_ = c.browserControllerClientConn.Close()
 }
 
-func (c *connections) ContentWriterClient() contentwriterV1.ContentWriterClient {
+func (c *Connections) ContentWriterClient() contentwriterV1.ContentWriterClient {
 	return c.contentWriterClient
 }
 
-func (c *connections) DnsResolverClient() dnsresolverV1.DnsResolverClient {
+func (c *Connections) DnsResolverClient() dnsresolverV1.DnsResolverClient {
 	return c.dnsResolverClient
 }
 
-func (c *connections) BrowserControllerClient() browsercontrollerV1.BrowserControllerClient {
+func (c *Connections) BrowserControllerClient() browsercontrollerV1.BrowserControllerClient {
 	return c.browserControllerClient
 }
