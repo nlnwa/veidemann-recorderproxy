@@ -27,6 +27,7 @@ import (
 	"crypto/x509/pkix"
 	"fmt"
 	"github.com/allegro/bigcache"
+	"github.com/sirupsen/logrus"
 	"golang.org/x/sync/singleflight"
 	"math/big"
 	"net"
@@ -87,8 +88,8 @@ func (c *CertCache) Get(host string, remoteCert *x509.Certificate, ctx *recordCo
 	key := host
 	if remoteCert != nil {
 		key = remoteCert.SerialNumber.String()
+		logrus.Debugf("%v\n\n%v\n\n%v\n%v", host, remoteCert.Issuer, ctx, key)
 	}
-
 	v, err, _ := c.g.Do(key, func() (interface{}, error) {
 		derBytes, err := c.cache.Get(key)
 		if err == bigcache.ErrEntryNotFound {

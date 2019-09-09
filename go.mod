@@ -6,6 +6,7 @@ require (
 	github.com/golang/protobuf v1.3.1
 	github.com/grpc-ecosystem/grpc-gateway v1.9.2 // indirect
 	github.com/nlnwa/veidemann-api-go v1.0.0-beta10
+	github.com/pkg/errors v0.8.1
 	github.com/sirupsen/logrus v1.4.1
 	github.com/spf13/pflag v1.0.3
 	github.com/spf13/viper v1.3.2

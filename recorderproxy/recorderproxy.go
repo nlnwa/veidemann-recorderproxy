@@ -30,16 +30,15 @@ import (
 	"github.com/nlnwa/veidemann-api-go/contentwriter/v1"
 	"github.com/nlnwa/veidemann-api-go/dnsresolver/v1"
 	"github.com/nlnwa/veidemann-api-go/frontier/v1"
+	"github.com/nlnwa/veidemann-recorderproxy/logging"
 	"io"
 	"io/ioutil"
 	"regexp"
 
-	//log "github.com/sirupsen/logrus"
-	"log"
+	log "github.com/sirupsen/logrus"
 	"net"
 	"net/http"
 	"net/url"
-	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -99,7 +98,7 @@ func NewRecorderProxy(port int, conn *Connections, connectionTimeout time.Durati
 		r.RoundTripper.Proxy = http.ProxyURL(cu)
 	}
 
-	r.Logger = log.New(os.Stderr, "", log.LstdFlags)
+	r.Logger = log.StandardLogger()
 
 	proxyCount++
 
@@ -130,6 +129,7 @@ func (proxy *RecorderProxy) Start() {
 
 func (proxy *RecorderProxy) SetVerbose(v bool) {
 	proxy.Verbose = v
+	proxy.RoundTripper.trace = v
 }
 
 func (proxy *RecorderProxy) filterRequest(req *http.Request, ctx *recordContext) (*http.Request, *http.Response) {
@@ -196,7 +196,8 @@ func (proxy *RecorderProxy) filterRequest(req *http.Request, ctx *recordContext)
 	if ps != "" {
 		port, err = strconv.Atoi(ps)
 		if err != nil {
-			log.Fatalf("Error looking up %v, cause: %v", uri.Host, err)
+			ctx.Close()
+			panic(fmt.Sprintf("Error parsing port for %v, cause: %v", uri, err))
 		}
 	}
 	dnsReq := &dnsresolver.ResolveRequest{
@@ -208,7 +209,8 @@ func (proxy *RecorderProxy) filterRequest(req *http.Request, ctx *recordContext)
 	defer cancel()
 	dnsResp, err := proxy.conn.DnsResolverClient().Resolve(c, dnsReq)
 	if err != nil {
-		log.Fatalf("Error looking up %v, cause: %v", uri.Host, err)
+		ctx.Close()
+		panic(fmt.Sprintf("Error looking up %v, cause: %v", uri.Host, err))
 	}
 
 	req.Header.Set(ENCODING, "identity")
@@ -306,18 +308,25 @@ func NewResponse(r *http.Request, contentType string, status int, body string) *
 
 type RpRoundTripper struct {
 	*http.Transport
+	trace bool
 }
 
 func NewRpRoundTripper() *RpRoundTripper {
 	rt := &RpRoundTripper{
-		http.DefaultTransport.(*http.Transport),
+		Transport: http.DefaultTransport.(*http.Transport),
 	}
 	rt.TLSClientConfig = tlsClientSkipVerify
 	return rt
 }
 
 func (r *RpRoundTripper) RoundTrip(req *http.Request, ctx *recordContext) (response *http.Response, e error) {
-	response, e = r.Transport.RoundTrip(req)
+	var transport http.RoundTripper
+	if r.trace {
+		transport, req = logging.DecorateRequest(r.Transport, req)
+	} else {
+		transport = r.Transport
+	}
+	response, e = transport.RoundTrip(req)
 
 	if e != nil {
 		handleResponseError(e, ctx)

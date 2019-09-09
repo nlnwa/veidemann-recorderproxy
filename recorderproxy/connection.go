@@ -23,6 +23,7 @@ import (
 	dnsresolverV1 "github.com/nlnwa/veidemann-api-go/dnsresolver/v1"
 	log "github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/stats"
 	"time"
 )
 
@@ -40,6 +41,7 @@ type Connections struct {
 	dnsResolverClient           dnsresolverV1.DnsResolverClient
 	browserControllerClientConn *grpc.ClientConn
 	browserControllerClient     browsercontrollerV1.BrowserControllerClient
+	StatsHandlerFactory         func(serviceName string) stats.Handler
 }
 
 func NewConnections() *Connections {
@@ -67,7 +69,7 @@ func (c *Connections) Connect(contentWriterHost, contentWriterPort, dnsResolverH
 	defer dialCancel()
 
 	// Set up ContentWriterClient
-	clientConn, err := grpc.DialContext(dialCtx, contentWriterAddr, opts...)
+	clientConn, err := grpc.DialContext(dialCtx, contentWriterAddr, c.addStatsHandler("ContentWriter", opts)...)
 	if err != nil {
 		log.Errorf("fail to dial contentwriter at %v: %v", contentWriterAddr, err)
 		return err
@@ -78,7 +80,7 @@ func (c *Connections) Connect(contentWriterHost, contentWriterPort, dnsResolverH
 	log.Printf("Connected to contentwriter")
 
 	// Set up DnsResolverClient
-	clientConn, err = grpc.DialContext(dialCtx, dnsResolverAddr, opts...)
+	clientConn, err = grpc.DialContext(dialCtx, dnsResolverAddr, c.addStatsHandler("DNSResolver", opts)...)
 	if err != nil {
 		log.Errorf("fail to dial dns resolver at %v: %v", dnsResolverAddr, err)
 		return err
@@ -89,7 +91,7 @@ func (c *Connections) Connect(contentWriterHost, contentWriterPort, dnsResolverH
 	log.Printf("Connected to dns resolver")
 
 	// Set up BrowserControllerClient
-	clientConn, err = grpc.DialContext(dialCtx, browserControllerAddr, opts...)
+	clientConn, err = grpc.DialContext(dialCtx, browserControllerAddr, c.addStatsHandler("BrowserController", opts)...)
 	if err != nil {
 		log.Errorf("fail to dial browser controller at %v: %v", browserControllerAddr, err)
 		return err
@@ -100,6 +102,13 @@ func (c *Connections) Connect(contentWriterHost, contentWriterPort, dnsResolverH
 	log.Printf("Connected to browser controller")
 
 	return nil
+}
+
+func (c *Connections) addStatsHandler(serviceName string, opts []grpc.DialOption) []grpc.DialOption {
+	if c.StatsHandlerFactory != nil {
+		return append(opts, grpc.WithStatsHandler(c.StatsHandlerFactory(serviceName)))
+	}
+	return opts
 }
 
 func (c *Connections) Close() {
