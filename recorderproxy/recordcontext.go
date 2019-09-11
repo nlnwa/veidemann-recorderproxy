@@ -36,7 +36,7 @@ import (
 	"time"
 )
 
-type recordContext struct {
+type RecordContext struct {
 	// Will contain the client request from the proxy
 	Req *http.Request
 	// Will contain the remote server's response (if available. nil if the request wasn't send yet)
@@ -68,8 +68,8 @@ type recordContext struct {
 
 var i int
 
-func NewRecordContext(proxy *RecorderProxy) *recordContext {
-	ctx := &recordContext{
+func NewRecordContext(proxy *RecorderProxy) *RecordContext {
+	ctx := &RecordContext{
 		session: atomic.AddInt64(&proxy.sess, 1),
 		proxy:   proxy,
 		conn:    proxy.conn,
@@ -78,11 +78,11 @@ func NewRecordContext(proxy *RecorderProxy) *recordContext {
 	return ctx
 }
 
-func (ctx *recordContext) init(req *http.Request) *recordContext {
+func (ctx *RecordContext) init(req *http.Request) *RecordContext {
 	cwcCtx, cwcCancel := context.WithTimeout(context.Background(), ctx.proxy.ConnectionTimeout)
 	cwc, err := ctx.proxy.conn.ContentWriterClient().Write(cwcCtx)
 	if err != nil {
-		ctx.Warnf("Error connecting to content writer, cause: %v", err)
+		ctx.SessionLogger().Warnf("Error connecting to content writer, cause: %v", err)
 		cwcCancel()
 		return nil
 	}
@@ -90,7 +90,7 @@ func (ctx *recordContext) init(req *http.Request) *recordContext {
 	bccCtx, bccCancel := context.WithTimeout(context.Background(), ctx.proxy.ConnectionTimeout)
 	bcc, err := ctx.proxy.conn.BrowserControllerClient().Do(bccCtx)
 	if err != nil {
-		ctx.Warnf("Error connecting to browser controller, cause: %v", err)
+		ctx.SessionLogger().Warnf("Error connecting to browser controller, cause: %v", err)
 		cwcCancel()
 		bccCancel()
 		return nil
@@ -118,7 +118,7 @@ func (ctx *recordContext) init(req *http.Request) *recordContext {
 			}
 			serr := status.Convert(err)
 			if serr.Code() == codes.Canceled {
-				ctx.Logf("context canceled %v\n", serr)
+				ctx.SessionLogger().Debugf("context canceled %v\n", serr)
 				ctx.bccMsgChan <- doReply
 				close(ctx.bccMsgChan)
 				ctx.Close()
@@ -126,7 +126,7 @@ func (ctx *recordContext) init(req *http.Request) *recordContext {
 				return
 			}
 			if serr.Code() == codes.DeadlineExceeded {
-				ctx.Logf("context deadline exeeded %v\n", err)
+				ctx.SessionLogger().Debugf("context deadline exeeded %v\n", err)
 				ctx.bccMsgChan <- doReply
 				close(ctx.bccMsgChan)
 				ctx.Close()
@@ -134,7 +134,7 @@ func (ctx *recordContext) init(req *http.Request) *recordContext {
 				return
 			}
 			if err != nil {
-				ctx.Warnf("unknown error from browser controller %v, %v, %v\n", doReply, err, serr)
+				ctx.SessionLogger().Warnf("unknown error from browser controller %v, %v, %v\n", doReply, err, serr)
 				ctx.Error = fmt.Errorf("unknown error from browser controller: %v", err.Error())
 				ctx.bccMsgChan <- &browsercontroller.DoReply{Action: &browsercontroller.DoReply_Cancel{Cancel: ctx.Error.Error()}}
 				close(ctx.bccMsgChan)
@@ -168,7 +168,7 @@ func (ctx *recordContext) init(req *http.Request) *recordContext {
 	return ctx
 }
 
-func (ctx *recordContext) saveCrawlLog(crawlLog *frontier.CrawlLog) {
+func (ctx *RecordContext) saveCrawlLog(crawlLog *frontier.CrawlLog) {
 	if ctx.closed {
 		return
 	}
@@ -183,11 +183,11 @@ func (ctx *recordContext) saveCrawlLog(crawlLog *frontier.CrawlLog) {
 	ctx.handleErr("Error sending crawl log to browser controller", err)
 }
 
-func (ctx *recordContext) SendUnknownError(err error) {
+func (ctx *RecordContext) SendUnknownError(err error) {
 	ctx.SendErrorCode(-5, "RecorderProxy internal failure", err.Error())
 }
 
-func (ctx *recordContext) SendErrorCode(code int32, msg string, detail string) {
+func (ctx *RecordContext) SendErrorCode(code int32, msg string, detail string) {
 	ctx.SendError(&commons.Error{
 		Code:   code,
 		Msg:    msg,
@@ -195,7 +195,7 @@ func (ctx *recordContext) SendErrorCode(code int32, msg string, detail string) {
 	})
 }
 
-func (ctx *recordContext) SendError(err *commons.Error) {
+func (ctx *RecordContext) SendError(err *commons.Error) {
 	if ctx.closed {
 		return
 	}
@@ -224,7 +224,7 @@ func (ctx *recordContext) SendError(err *commons.Error) {
 	}
 }
 
-func (ctx *recordContext) handleErr(msg string, err error) bool {
+func (ctx *RecordContext) handleErr(msg string, err error) bool {
 	if err != nil {
 		log.Warnf("%s, cause: %v", msg, err)
 		defer ctx.Close()
@@ -233,7 +233,7 @@ func (ctx *recordContext) handleErr(msg string, err error) bool {
 	return false
 }
 
-func (ctx *recordContext) Close() {
+func (ctx *RecordContext) Close() {
 	if ctx.closed {
 		return
 	}
@@ -245,22 +245,13 @@ func (ctx *recordContext) Close() {
 	}
 }
 
-func (ctx *recordContext) printf(msg string, argv ...interface{}) {
-	ctx.proxy.Logger.Printf("[%03d] "+msg+"\n", append([]interface{}{ctx.session & 0xFF}, argv...)...)
-}
-
-// Logf prints a message to the proxy's log. Should be used in a ProxyHttpServer's filter
-// This message will be printed only if the Verbose field of the ProxyHttpServer is set to true
-func (ctx *recordContext) Logf(msg string, argv ...interface{}) {
-	if ctx.proxy.Verbose {
-		ctx.printf("INFO: "+msg, argv...)
-	}
-}
-
-// Warnf prints a message to the proxy's log. Should be used in a ProxyHttpServer's filter
-// This message will always be printed.
-func (ctx *recordContext) Warnf(msg string, argv ...interface{}) {
-	ctx.printf("WARN: "+msg, argv...)
+func (ctx *RecordContext) SessionLogger() *Logger {
+	return &Logger{log.WithFields(
+		log.Fields{
+			"session":   ctx.session,
+			"component": "PROXY",
+		},
+	)}
 }
 
 var charsetFinder = regexp.MustCompile("charset=([^ ;]*)")
@@ -268,7 +259,7 @@ var charsetFinder = regexp.MustCompile("charset=([^ ;]*)")
 // Will try to infer the character set of the request from the headers.
 // Returns the empty string if we don't know which character set it used.
 // Currently it will look for charset=<charset> in the Content-Type header of the request.
-func (ctx *recordContext) Charset() string {
+func (ctx *RecordContext) Charset() string {
 	charsets := charsetFinder.FindStringSubmatch(ctx.Resp.Header.Get("Content-Type"))
 	if charsets == nil {
 		return ""

@@ -26,7 +26,7 @@ func (proxy *RecorderProxy) handleHttp(w http.ResponseWriter, r *http.Request) {
 	ctx.init(r)
 
 	var err error
-	ctx.Logf("Got request on proxy #%v, port %v for %s %s\n", proxy.id, proxy.addr, r.Method, r.URL.String())
+	ctx.SessionLogger().Debugf("Got request on proxy #%v, port %v for %s %s\n", proxy.id, proxy.addr, r.Method, r.URL.String())
 	if !r.URL.IsAbs() {
 		proxy.NonproxyHandler.ServeHTTP(w, r)
 		return
@@ -40,23 +40,23 @@ func (proxy *RecorderProxy) handleHttp(w http.ResponseWriter, r *http.Request) {
 			ctx.Error = err
 			resp = proxy.filterResponse(nil, ctx)
 			if resp == nil {
-				ctx.Logf("error read response %v %v:", r.URL.Host, err.Error())
+				ctx.SessionLogger().Debugf("error read response %v %v:", r.URL.Host, err.Error())
 				http.Error(w, err.Error(), 500)
 				return
 			}
 		}
-		ctx.Logf("Received response %v", resp.Status)
+		ctx.SessionLogger().Debugf("Received response %v", resp.Status)
 	}
 	origBody := resp.Body
 	resp = proxy.filterResponse(resp, ctx)
 	defer func() {
 		e := resp.Body.Close()
 		if e != nil {
-			ctx.Warnf("Error while closing body: %v\n", e)
+			ctx.SessionLogger().Warnf("Error while closing body: %v\n", e)
 		}
 	}()
 
-	ctx.Logf("Copying response to client %v [%d]", resp.Status, resp.StatusCode)
+	ctx.SessionLogger().Debugf("Copying response to client %v [%d]", resp.Status, resp.StatusCode)
 	// http.ResponseWriter will take care of filling the correct response length
 	// Setting it now, might impose wrong value, contradicting the actual new
 	// body the user returned.
@@ -70,7 +70,7 @@ func (proxy *RecorderProxy) handleHttp(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(resp.StatusCode)
 	nr, err := io.Copy(w, resp.Body)
 	if err := resp.Body.Close(); err != nil {
-		ctx.Warnf("Can't close response body %v", err)
+		ctx.SessionLogger().Warnf("Can't close response body %v", err)
 	}
-	ctx.Logf("Copied %v bytes to client error=%v", nr, err)
+	ctx.SessionLogger().Debugf("Copied %v bytes to client error=%v", nr, err)
 }

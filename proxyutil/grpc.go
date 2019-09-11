@@ -18,7 +18,7 @@ package main
 
 import (
 	"context"
-	"fmt"
+	"github.com/nlnwa/veidemann-recorderproxy/recorderproxy"
 	"google.golang.org/grpc/stats"
 )
 
@@ -27,37 +27,37 @@ type sh struct {
 }
 
 func NewStatsHandler(serviceName string) stats.Handler {
-	return &sh{serviceName}
+	return &sh{"GRPC:" + serviceName}
 }
 
 func (h *sh) TagRPC(c context.Context, i *stats.RPCTagInfo) context.Context {
-	fmt.Printf("%s: TagRPC: %s %v\n", h.service, i.FullMethodName, i.FailFast)
+	recorderproxy.LogWithComponent(h.service).Printf("TagRPC: %s %v\n", i.FullMethodName, i.FailFast)
 	return c
 }
 
 func (h *sh) HandleRPC(c context.Context, s stats.RPCStats) {
 	switch v := s.(type) {
 	case *stats.Begin:
-		fmt.Printf("%s: !!!! B HandleRPC: %v\n", h.service, v.BeginTime)
+		recorderproxy.LogWithComponent(h.service).Printf("!!!! B HandleRPC: %v\n", v.BeginTime)
 	case *stats.End:
-		fmt.Printf("%s: !!!! E HandleRPC: %v, %v, %v\n", h.service, v.BeginTime, v.EndTime, v.Error)
+		recorderproxy.LogWithComponent(h.service).Printf("!!!! E HandleRPC: %v, %v, %v\n", v.BeginTime, v.EndTime, v.Error)
 	case *stats.OutPayload:
-		fmt.Printf("%s: HandleRPC: %T\n", h.service, v.Payload)
+		recorderproxy.LogWithComponent(h.service).Printf("HandleRPC: %T\n", v.Payload)
 	default:
-		fmt.Printf("%s: HandleRPC: isclient %v %T\n", h.service, s.IsClient(), s)
+		recorderproxy.LogWithComponent(h.service).Printf("HandleRPC: isclient %v %T\n", s.IsClient(), s)
 	}
 }
 
 func (h *sh) TagConn(c context.Context, i *stats.ConnTagInfo) context.Context {
-	fmt.Printf("%s: TagConn: %s --> %s\n", h.service, i.LocalAddr, i.RemoteAddr)
+	recorderproxy.LogWithComponent(h.service).Printf("TagConn: %s --> %s\n", i.LocalAddr, i.RemoteAddr)
 	return c
 }
 
 func (h *sh) HandleConn(c context.Context, s stats.ConnStats) {
 	switch v := s.(type) {
 	case *stats.ConnBegin:
-		fmt.Printf("%s: HandleConn: isclient %v\n", h.service, v.IsClient())
+		recorderproxy.LogWithComponent(h.service).Printf("HandleConn: isclient %v\n", v.IsClient())
 	default:
-		fmt.Printf("%s: HandleConn: isclient %v %T\n", h.service, s.IsClient(), s)
+		recorderproxy.LogWithComponent(h.service).Printf("HandleConn: isclient %v %T\n", s.IsClient(), s)
 	}
 }

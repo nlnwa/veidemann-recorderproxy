@@ -20,7 +20,6 @@ import (
 	"crypto/tls"
 	"fmt"
 	"github.com/nlnwa/veidemann-recorderproxy/errors"
-	"github.com/nlnwa/veidemann-recorderproxy/logging"
 	"github.com/nlnwa/veidemann-recorderproxy/recorderproxy"
 	log "github.com/sirupsen/logrus"
 	flag "github.com/spf13/pflag"
@@ -44,7 +43,7 @@ func main() {
 	flag.Parse()
 	viper.BindPFlags(flag.CommandLine)
 
-	logging.InitLog(viper.GetString("log-level"), viper.GetString("log-formatter"), viper.GetBool("log-method"))
+	recorderproxy.InitLog(viper.GetString("log-level"), viper.GetString("log-formatter"), viper.GetBool("log-method"))
 
 	if flag.NArg() != 1 || viper.GetBool("help") {
 		flag.Usage()

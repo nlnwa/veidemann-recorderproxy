@@ -76,8 +76,8 @@ func SetCA(caCertFile, caKeyFile string) error {
 	return nil
 }
 
-func TLSConfigFromCA() func(host string, remoteCert *x509.Certificate, ctx *recordContext) (*tls.Config, error) {
-	return func(host string, remoteCert *x509.Certificate, ctx *recordContext) (*tls.Config, error) {
+func TLSConfigFromCA() func(host string, remoteCert *x509.Certificate, ctx *RecordContext) (*tls.Config, error) {
+	return func(host string, remoteCert *x509.Certificate, ctx *RecordContext) (*tls.Config, error) {
 		var err error
 		var cert *tls.Certificate
 
@@ -85,12 +85,12 @@ func TLSConfigFromCA() func(host string, remoteCert *x509.Certificate, ctx *reco
 		config := tls.Config{
 			InsecureSkipVerify: true,
 		}
-		ctx.Logf("signing for %s", stripPort(host))
+		ctx.SessionLogger().Debugf("signing for %s", stripPort(host))
 
 		cert, err = RecorderProxyCertCache.Get(hostname, remoteCert, ctx)
 
 		if err != nil {
-			ctx.Warnf("Cannot sign host certificate with provided CA: %s", err)
+			ctx.SessionLogger().Warnf("Cannot sign host certificate with provided CA: %s", err)
 			return nil, err
 		}
 

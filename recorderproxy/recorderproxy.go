@@ -30,7 +30,6 @@ import (
 	"github.com/nlnwa/veidemann-api-go/contentwriter/v1"
 	"github.com/nlnwa/veidemann-api-go/dnsresolver/v1"
 	"github.com/nlnwa/veidemann-api-go/frontier/v1"
-	"github.com/nlnwa/veidemann-recorderproxy/logging"
 	"io"
 	"io/ioutil"
 	"regexp"
@@ -71,7 +70,6 @@ type RecorderProxy struct {
 	KeepDestinationHeaders bool
 	// setting Verbose to true will log information on each request sent to the proxy
 	Verbose         bool
-	Logger          Logger
 	NonproxyHandler http.Handler
 	RoundTripper    *RpRoundTripper
 
@@ -97,8 +95,6 @@ func NewRecorderProxy(port int, conn *Connections, connectionTimeout time.Durati
 		cu, _ := url.Parse("http://" + cache)
 		r.RoundTripper.Proxy = http.ProxyURL(cu)
 	}
-
-	r.Logger = log.StandardLogger()
 
 	proxyCount++
 
@@ -132,7 +128,7 @@ func (proxy *RecorderProxy) SetVerbose(v bool) {
 	proxy.RoundTripper.trace = v
 }
 
-func (proxy *RecorderProxy) filterRequest(req *http.Request, ctx *recordContext) (*http.Request, *http.Response) {
+func (proxy *RecorderProxy) filterRequest(req *http.Request, ctx *RecordContext) (*http.Request, *http.Response) {
 	var prolog bytes.Buffer
 	writeRequestProlog(req, &prolog)
 
@@ -244,7 +240,7 @@ func (proxy *RecorderProxy) filterRequest(req *http.Request, ctx *recordContext)
 	return req, nil
 }
 
-func (proxy *RecorderProxy) filterResponse(respOrig *http.Response, ctx *recordContext) (resp *http.Response) {
+func (proxy *RecorderProxy) filterResponse(respOrig *http.Response, ctx *RecordContext) (resp *http.Response) {
 	resp = respOrig
 	ctx.Resp = resp
 	if resp == nil {
@@ -319,10 +315,10 @@ func NewRpRoundTripper() *RpRoundTripper {
 	return rt
 }
 
-func (r *RpRoundTripper) RoundTrip(req *http.Request, ctx *recordContext) (response *http.Response, e error) {
+func (r *RpRoundTripper) RoundTrip(req *http.Request, ctx *RecordContext) (response *http.Response, e error) {
 	var transport http.RoundTripper
 	if r.trace {
-		transport, req = logging.DecorateRequest(r.Transport, req)
+		transport, req = DecorateRequest(r.Transport, req, ctx)
 	} else {
 		transport = r.Transport
 	}
@@ -345,7 +341,7 @@ func (r *RpRoundTripper) RoundTrip(req *http.Request, ctx *recordContext) (respo
 	return
 }
 
-func handleResponseError(e error, ctx *recordContext) {
+func handleResponseError(e error, ctx *RecordContext) {
 	if e != nil {
 		err := &commons.Error{}
 		if ctx.Error != nil {
@@ -416,9 +412,9 @@ func isEof(r *bufio.Reader) bool {
 	return false
 }
 
-func removeProxyHeaders(ctx *recordContext, r *http.Request) {
+func removeProxyHeaders(ctx *RecordContext, r *http.Request) {
 	r.RequestURI = "" // this must be reset when serving a request with the client
-	ctx.Logf("Sending request %v %v", r.Method, r.URL.String())
+	ctx.SessionLogger().Debugf("Sending request %v %v", r.Method, r.URL.String())
 	// If no Accept-Encoding header exists, Transport will add the headers it can accept
 	// and would wrap the response body with the relevant reader.
 	r.Header.Del("Accept-Encoding")

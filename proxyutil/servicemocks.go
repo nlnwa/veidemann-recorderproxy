@@ -24,6 +24,7 @@ import (
 	configV1 "github.com/nlnwa/veidemann-api-go/config/v1"
 	contentwriterV1 "github.com/nlnwa/veidemann-api-go/contentwriter/v1"
 	dnsresolverV1 "github.com/nlnwa/veidemann-api-go/dnsresolver/v1"
+	"github.com/nlnwa/veidemann-recorderproxy/recorderproxy"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -81,7 +82,7 @@ func (s *GrpcServiceMock) bufDialer(context.Context, string) (net.Conn, error) {
 func (s *GrpcServiceMock) addBcRequest(r *browsercontrollerV1.DoRequest) {
 	s.l.Lock()
 
-	fmt.Printf("\x1b[%dm%s\x1b[0m %v\n", 32, "BCR", r)
+	recorderproxy.LogWithComponent("MOCK:BrowserController").Print(r)
 
 	//s.requests.BrowserControllerRequests = append(s.requests.BrowserControllerRequests, r)
 	s.l.Unlock()
@@ -90,7 +91,7 @@ func (s *GrpcServiceMock) addBcRequest(r *browsercontrollerV1.DoRequest) {
 func (s *GrpcServiceMock) addDnsRequest(r *dnsresolverV1.ResolveRequest) {
 	s.l.Lock()
 
-	fmt.Printf("\x1b[%dm%s\x1b[0m %v\n", 33, "DNS", r)
+	recorderproxy.LogWithComponent("MOCK:DNSResolver").Print(r)
 
 	//s.requests.DnsResolverRequests = append(s.requests.DnsResolverRequests, r)
 	s.l.Unlock()
@@ -101,11 +102,12 @@ func (s *GrpcServiceMock) addCwRequest(r *contentwriterV1.WriteRequest) {
 
 	switch v := r.Value.(type) {
 	case *contentwriterV1.WriteRequest_Payload:
-		fmt.Printf("\x1b[%dmCWR\x1b[0m payload:<record_num:%d data:\"%s... (%d bytes)\" >\n", 34,
-			v.Payload.RecordNum, v.Payload.Data[0:5], len(v.Payload.Data))
+		recorderproxy.LogWithComponent("MOCK:ContentWriter").
+			Printf("payload:<record_num:%d data:\"%s... (%d bytes)\" >\n",
+				v.Payload.RecordNum, v.Payload.Data[0:5], len(v.Payload.Data))
 
 	default:
-		fmt.Printf("\x1b[%dm%s\x1b[0m %v\n", 34, "CWR", r)
+		recorderproxy.LogWithComponent("MOCK:ContentWriter").Print(r)
 	}
 
 	//s.requests.ContentWriterRequests = append(s.requests.ContentWriterRequests, r)

@@ -39,7 +39,7 @@ const (
 type wrappedBody struct {
 	io.ReadCloser
 	bodyType           string
-	recordContext      *recordContext
+	recordContext      *RecordContext
 	recNum             int32
 	size               int64
 	blockCrc           hash.Hash
@@ -51,7 +51,7 @@ type wrappedBody struct {
 	payloadContentType string
 }
 
-func WrapBody(body io.ReadCloser, bodyType string, ctx *recordContext, recNum int32, statusCode int32, contentType string,
+func WrapBody(body io.ReadCloser, bodyType string, ctx *RecordContext, recNum int32, statusCode int32, contentType string,
 	recordType contentwriter.RecordType, prolog []byte) (*wrappedBody, error) {
 
 	b := &wrappedBody{

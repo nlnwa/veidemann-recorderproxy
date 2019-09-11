@@ -77,14 +77,14 @@ func NewCache(lifeWindow time.Duration, maxSizeMb int) (*CertCache, error) {
 }
 
 // Put writes a certificate to the cache
-func (c *CertCache) Put(key string, derBytes []byte, ctx *recordContext) error {
+func (c *CertCache) Put(key string, derBytes []byte, ctx *RecordContext) error {
 	err = c.cache.Set(key, derBytes)
-	ctx.Logf("Certificate for key %s written to cache", key)
+	ctx.SessionLogger().Debugf("Certificate for key %s written to cache", key)
 	return err
 }
 
 // Get reads a certificate from the cache. It returns a new certificate when no entry exists for the given key.
-func (c *CertCache) Get(host string, remoteCert *x509.Certificate, ctx *recordContext) (*tls.Certificate, error) {
+func (c *CertCache) Get(host string, remoteCert *x509.Certificate, ctx *RecordContext) (*tls.Certificate, error) {
 	key := host
 	if remoteCert != nil {
 		key = remoteCert.SerialNumber.String()
@@ -93,7 +93,7 @@ func (c *CertCache) Get(host string, remoteCert *x509.Certificate, ctx *recordCo
 	v, err, _ := c.g.Do(key, func() (interface{}, error) {
 		derBytes, err := c.cache.Get(key)
 		if err == bigcache.ErrEntryNotFound {
-			ctx.Logf("Creating certificate for key %s", key)
+			ctx.SessionLogger().Debugf("Creating certificate for key %s", key)
 			derBytes, err = signHost(key, remoteCert)
 			if err != nil {
 				return nil, err
@@ -103,7 +103,7 @@ func (c *CertCache) Get(host string, remoteCert *x509.Certificate, ctx *recordCo
 				return nil, err
 			}
 		} else {
-			ctx.Logf("Using cached certificate for key %s", key)
+			ctx.SessionLogger().Debugf("Using cached certificate for key %s", key)
 		}
 		if err != nil {
 			return nil, err

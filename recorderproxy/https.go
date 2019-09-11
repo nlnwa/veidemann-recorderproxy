@@ -57,7 +57,7 @@ func (proxy *RecorderProxy) handleHttps(w http.ResponseWriter, connectReq *http.
 	host := connectReq.URL.Host
 
 	proxyClient.Write([]byte("HTTP/1.0 200 OK\r\n\r\n"))
-	ctx.Logf("Assuming CONNECT is TLS, mitm proxying it")
+	ctx.SessionLogger().Debugf("Assuming CONNECT is TLS, mitm proxying it")
 	// this goes in a separate goroutine, so that the net/http server won't think we're
 	// still handling the request even after hijacking the connection. Those HTTP CONNECT
 	// request can take forever, and the server will be stuck when "closed".
@@ -67,7 +67,7 @@ func (proxy *RecorderProxy) handleHttps(w http.ResponseWriter, connectReq *http.
 		var remoteCert *x509.Certificate
 		remoteConn, remoteConnErr := proxy.ConnectDial(connectReq.Host)
 		if remoteConnErr != nil {
-			ctx.Warnf("Cannot handshake remote server %v %v", connectReq.Host, remoteConnErr)
+			ctx.SessionLogger().Warnf("Cannot handshake remote server %v %v", connectReq.Host, remoteConnErr)
 		}
 		if remoteConn != nil && remoteConn.ConnectionState().HandshakeComplete {
 			remoteCert = remoteConn.ConnectionState().PeerCertificates[0]
@@ -92,16 +92,16 @@ func (proxy *RecorderProxy) handleHttps(w http.ResponseWriter, connectReq *http.
 
 		if err := rawClientTls.Handshake(); err != nil {
 			ctx.Resp = NewResponse(connectReq, "text/plain", 555, "CONNECT failed")
-			ctx.Warnf("Cannot handshake client %v %v", connectReq.Host, err)
+			ctx.SessionLogger().Warnf("Cannot handshake client %v %v", connectReq.Host, err)
 			if ctx.Resp != nil {
 				if err := ctx.Resp.Write(proxyClient); err != nil {
-					ctx.Warnf("Cannot write response that reject http CONNECT: %v", err)
+					ctx.SessionLogger().Warnf("Cannot write response that reject http CONNECT: %v", err)
 				}
 			}
 			defer func() {
 				e := proxyClient.Close()
 				if e != nil {
-					ctx.Logf("Error while closing proxy client: %v\n", e)
+					ctx.SessionLogger().Debugf("Error while closing proxy client: %v\n", e)
 				}
 			}()
 
@@ -110,7 +110,7 @@ func (proxy *RecorderProxy) handleHttps(w http.ResponseWriter, connectReq *http.
 		defer func() {
 			e := rawClientTls.Close()
 			if e != nil {
-				ctx.Logf("Error while closing raw client Tls: %v\n", e)
+				ctx.SessionLogger().Debugf("Error while closing raw client Tls: %v\n", e)
 			}
 		}()
 
@@ -121,7 +121,7 @@ func (proxy *RecorderProxy) handleHttps(w http.ResponseWriter, connectReq *http.
 			}
 		}
 
-		ctx.Logf("Exiting on EOF")
+		ctx.SessionLogger().Debugf("Exiting on EOF")
 	}()
 }
 
@@ -134,11 +134,11 @@ func (proxy *RecorderProxy) handleTunneledRequest(proxyClient net.Conn, rawClien
 		return
 	}
 	if err != nil {
-		ctx.Warnf("Cannot read TLS request from mitm'd client %v %v", connectReq.Host, err)
+		ctx.SessionLogger().Warnf("Cannot read TLS request from mitm'd client %v %v", connectReq.Host, err)
 		return
 	}
 	req.RemoteAddr = connectReq.RemoteAddr // since we're converting the request, need to carry over the original connecting IP as well
-	ctx.Logf("req %v", connectReq.Host)
+	ctx.SessionLogger().Debugf("req %v", connectReq.Host)
 
 	if !httpsRegexp.MatchString(req.URL.String()) {
 		req.URL, err = url.Parse("https://" + connectReq.Host + req.URL.String())
@@ -152,54 +152,54 @@ func (proxy *RecorderProxy) handleTunneledRequest(proxyClient net.Conn, rawClien
 	} else {
 		if resp == nil {
 			if err != nil {
-				ctx.Warnf("Illegal URL https://%s%s", connectReq.Host, req.URL.Path)
+				ctx.SessionLogger().Warnf("Illegal URL https://%s%s", connectReq.Host, req.URL.Path)
 				return
 			}
 			removeProxyHeaders(ctx, req)
 			resp, err = ctx.proxy.RoundTripper.RoundTrip(req, ctx)
 			if err != nil {
-				ctx.Warnf("Cannot read TLS response from mitm'd server %v, URL: %s", err, req.URL)
+				ctx.SessionLogger().Warnf("Cannot read TLS response from mitm'd server %v, URL: %s", err, req.URL)
 				if err.Error() == "Connect failed" {
 					defer func() {
 						e := proxyClient.Close()
 						if e != nil {
-							ctx.Logf("Error while closing proxy client: %v\n", e)
+							ctx.SessionLogger().Debugf("Error while closing proxy client: %v\n", e)
 						}
 					}()
 				}
 				return
 			}
-			ctx.Logf("resp %v", resp.Status)
+			ctx.SessionLogger().Debugf("resp %v", resp.Status)
 		}
 		resp = proxy.filterResponse(resp, ctx)
-		ctx.Logf("Copying response to client %v [%d]", resp.Status, resp.StatusCode)
+		ctx.SessionLogger().Debugf("Copying response to client %v [%d]", resp.Status, resp.StatusCode)
 		defer func() {
 			e := resp.Body.Close()
 			if e != nil {
-				ctx.Warnf("Error while closing body: %v\n", e)
+				ctx.SessionLogger().Warnf("Error while closing body: %v\n", e)
 			}
 		}()
 
 		if err := resp.Write(rawClientTls); err != nil {
-			ctx.Warnf("Cannot write TLS response from mitm'd client: %v, URL: %s", err, req.URL)
+			ctx.SessionLogger().Warnf("Cannot write TLS response from mitm'd client: %v, URL: %s", err, req.URL)
 			ctx.SendErrorCode(-5011, "CANCELED_BY_BROWSER", "Veidemann recorder proxy lost connection to client")
 			return
 		}
 	}
 	if req.Close {
-		ctx.Logf("Non-persistent connection; closing")
+		ctx.SessionLogger().Debugf("Non-persistent connection; closing")
 		return
 	}
 
 	return true
 }
 
-func httpError(w io.WriteCloser, ctx *recordContext, err error) {
-	ctx.Logf("Got error %s, sending 502 to client", err)
+func httpError(w io.WriteCloser, ctx *RecordContext, err error) {
+	ctx.SessionLogger().Debugf("Got error %s, sending 502 to client", err)
 	if _, err := io.WriteString(w, "HTTP/1.1 502 Bad Gateway\r\n\r\n"); err != nil {
-		ctx.Warnf("Error responding to client: %s", err)
+		ctx.SessionLogger().Warnf("Error responding to client: %s", err)
 	}
 	if err := w.Close(); err != nil {
-		ctx.Warnf("Error closing client connection: %s", err)
+		ctx.SessionLogger().Warnf("Error closing client connection: %s", err)
 	}
 }

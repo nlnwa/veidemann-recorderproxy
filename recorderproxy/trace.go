@@ -14,17 +14,21 @@
  * limitations under the License.
  */
 
-package logging
+package recorderproxy
 
 import (
 	"crypto/tls"
-	"fmt"
 	"net/http"
 	"net/http/httptrace"
 )
 
-func DecorateRequest(roundTripper http.RoundTripper, req *http.Request) (http.RoundTripper, *http.Request) {
+func DecorateRequest(roundTripper http.RoundTripper, req *http.Request, ctx *RecordContext) (http.RoundTripper, *http.Request) {
 	t := &transport{wrapped: roundTripper}
+	if ctx == nil {
+		t.log = StandardLogger().WithComponent("CLIENT")
+	} else {
+		t.log = ctx.SessionLogger()
+	}
 
 	trace := &httptrace.ClientTrace{
 		DNSStart:          t.DNSStart,
@@ -46,6 +50,7 @@ func DecorateRequest(roundTripper http.RoundTripper, req *http.Request) (http.Ro
 type transport struct {
 	wrapped http.RoundTripper
 	current *http.Request
+	log     *Logger
 }
 
 // RoundTrip wraps http.DefaultTransport.RoundTrip to keep track
@@ -56,42 +61,42 @@ func (t *transport) RoundTrip(req *http.Request) (*http.Response, error) {
 }
 
 func (t *transport) GetConn(hostPort string) {
-	fmt.Printf("** Get Conn: %+v\n", hostPort)
+	t.log.Printf("** Get Conn: %+v\n", hostPort)
 }
 
 // GotConn prints whether the connection has been used previously
 // for the current request.
 func (t *transport) GotConn(info httptrace.GotConnInfo) {
-	fmt.Printf("****** Connection reused for %v? %v\n", t.current.URL, info.Reused)
+	t.log.Printf("****** Connection reused for %v? %v\n", t.current.URL, info.Reused)
 }
 
 func (t *transport) DNSStart(info httptrace.DNSStartInfo) {
-	fmt.Printf("** DNS Info: %+v\n", info)
+	t.log.Printf("** DNS Info: %+v\n", info)
 }
 
 func (t *transport) DNSDone(info httptrace.DNSDoneInfo) {
-	fmt.Printf("** DNS Info: %+v\n", info)
+	t.log.Printf("** DNS Info: %+v\n", info)
 }
 
 func (t *transport) PutIdleConn(err error) {
-	fmt.Printf("** Connection PutIdleCon for %v? %v\n", t.current.URL, err)
+	t.log.Printf("** Connection PutIdleCon for %v? %v\n", t.current.URL, err)
 }
 
 func (t *transport) ConnectStart(network, addr string) {
-	fmt.Printf("** %v %v\n", network, addr)
+	t.log.Printf("** %v %v\n", network, addr)
 }
 
 func (t *transport) ConnectDone(network, addr string, err error) {
-	fmt.Printf("** %v %v %v\n", network, addr, err)
+	t.log.Printf("** %v %v %v\n", network, addr, err)
 }
 
 func (t *transport) TLSHandshakeStart() {
-	fmt.Println("** Handshake start")
+	t.log.Println("** Handshake start")
 }
 
 func (t *transport) TLSHandshakeDone(state tls.ConnectionState, err error) {
-	fmt.Printf("** Handshake done: %v %v %v\n", state.ServerName, state.HandshakeComplete, err)
+	t.log.Printf("** Handshake done: %v %v %v\n", state.ServerName, state.HandshakeComplete, err)
 	for _, c := range state.PeerCertificates {
-		fmt.Printf("** Handshake done: %v\n", c.Issuer)
+		t.log.Printf("** Handshake done: %v\n", c.Issuer)
 	}
 }

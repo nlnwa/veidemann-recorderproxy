@@ -18,7 +18,7 @@ package main
 
 import (
 	"context"
-	"github.com/nlnwa/veidemann-recorderproxy/logging"
+	"github.com/nlnwa/veidemann-recorderproxy/recorderproxy"
 	"io/ioutil"
 	"net/http"
 	"time"
@@ -37,7 +37,7 @@ func get(url string, client *http.Client, timeout time.Duration) (int, []byte, e
 	}
 
 	t := client.Transport
-	client.Transport, req = logging.DecorateRequest(t, req)
+	client.Transport, req = recorderproxy.DecorateRequest(t, req, nil)
 
 	resp, err := client.Do(req)
 	if err != nil {
