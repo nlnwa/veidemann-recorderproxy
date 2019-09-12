@@ -71,11 +71,11 @@ func (t *transport) GotConn(info httptrace.GotConnInfo) {
 }
 
 func (t *transport) DNSStart(info httptrace.DNSStartInfo) {
-	t.log.Printf("** DNS Info: %+v\n", info)
+	t.log.Printf("DNS start: %+v\n", info.Host)
 }
 
 func (t *transport) DNSDone(info httptrace.DNSDoneInfo) {
-	t.log.Printf("** DNS Info: %+v\n", info)
+	t.log.Printf("DNS done: %+v\n", info)
 }
 
 func (t *transport) PutIdleConn(err error) {
@@ -83,20 +83,20 @@ func (t *transport) PutIdleConn(err error) {
 }
 
 func (t *transport) ConnectStart(network, addr string) {
-	t.log.Printf("** %v %v\n", network, addr)
+	t.log.Printf("Connecting to %v %v\n", network, addr)
 }
 
 func (t *transport) ConnectDone(network, addr string, err error) {
-	t.log.Printf("** %v %v %v\n", network, addr, err)
+	t.log.Printf("Connected to %v %v %v\n", network, addr, err)
 }
 
 func (t *transport) TLSHandshakeStart() {
-	t.log.Println("** Handshake start")
+	t.log.Println("TLS Handshake start")
 }
 
 func (t *transport) TLSHandshakeDone(state tls.ConnectionState, err error) {
-	t.log.Printf("** Handshake done: %v %v %v\n", state.ServerName, state.HandshakeComplete, err)
+	t.log.Printf("TLS Handshake done: %v %v %v\n", state.ServerName, state.HandshakeComplete, err)
 	for _, c := range state.PeerCertificates {
-		t.log.Printf("** Handshake done: %v\n", c.Issuer)
+		t.log.Printf("TLS peer cert: %v\n", c.Issuer)
 	}
 }

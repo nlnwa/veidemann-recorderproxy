@@ -1213,7 +1213,6 @@ func printRequest(req interface{}) string {
 // localRecorderProxy creates a new recorderproxy which uses internal transport
 func localRecorderProxy() (client *http.Client, proxy *recorderproxy.RecorderProxy) {
 	sp := goproxy.NewProxyHttpServer()
-	//sp.Verbose = true
 	secondProxy = httptest.NewServer(sp)
 	spUrl, _ := url.Parse(secondProxy.URL)
 
@@ -1227,7 +1226,6 @@ func localRecorderProxy() (client *http.Client, proxy *recorderproxy.RecorderPro
 	spAddr := spUrl.Host
 	spAddr = ""
 	proxy = recorderproxy.NewRecorderProxy(0, conn, 1*time.Minute, spAddr)
-	proxy.SetVerbose(true)
 	p := httptest.NewServer(proxy)
 	proxyUrl, _ := url.Parse(p.URL)
 	tr := &http.Transport{TLSClientConfig: acceptAllCerts, Proxy: http.ProxyURL(proxyUrl), DisableKeepAlives: true}

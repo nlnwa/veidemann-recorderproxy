@@ -18,7 +18,6 @@ package main
 
 import (
 	"crypto/tls"
-	"fmt"
 	"github.com/nlnwa/veidemann-recorderproxy/errors"
 	"github.com/nlnwa/veidemann-recorderproxy/recorderproxy"
 	log "github.com/sirupsen/logrus"
@@ -35,7 +34,6 @@ var (
 )
 
 func main() {
-	flag.BoolP("verbose", "v", false, "should every proxy request be logged to stdout")
 	flag.BoolP("help", "h", false, "Usage instructions")
 	flag.String("log-level", "info", "log level, available levels are panic, fatal, error, warn, info, debug and trace")
 	flag.String("log-formatter", "text", "log formatter, available values are text, logfmt and json")
@@ -65,10 +63,10 @@ func main() {
 		<-grpcServices.doneCW
 	}
 
-	log.Infof("Status: %v", statusCode)
+	recorderproxy.LogWithComponent("CLIENT").Infof("Status: %v", statusCode)
 
 	if len(got) > 0 {
-		fmt.Printf("\n%s... (%d bytes)\n\n", got[0:10], len(got))
+		recorderproxy.LogWithComponent("CLIENT").Printf("Content: %s... (%d bytes)\n\n", got[0:10], len(got))
 	}
 
 	if err != nil {
@@ -88,7 +86,6 @@ func newProxy(mock *GrpcServiceMock) *http.Client {
 	//spAddr := spUrl.Host
 	spAddr := ""
 	proxy := recorderproxy.NewRecorderProxy(0, conn, 1*time.Minute, spAddr)
-	proxy.SetVerbose(viper.GetBool("verbose"))
 	p := httptest.NewServer(proxy)
 	proxyUrl, _ := url.Parse(p.URL)
 	tr := &http.Transport{TLSClientConfig: acceptAllCerts, Proxy: http.ProxyURL(proxyUrl), DisableKeepAlives: true}

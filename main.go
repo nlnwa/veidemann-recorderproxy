@@ -17,7 +17,6 @@ func init() {
 }
 
 func main() {
-	verbose := flag.BoolP("verbose", "v", false, "should every proxy request be logged to stdout")
 	flag.Int("port", 8080, "first proxy listen port")
 	flag.Int("proxy-count", 10, "number of proxies to start")
 	flag.String("content-writer-host", "localhost", "Content writer host")
@@ -31,12 +30,17 @@ func main() {
 	flag.String("ca-key", "", "Path to private key for CA certificate used for signing client connections")
 	flag.String("cache-host", "", "Cache host")
 	flag.String("cache-port", "", "Cache port")
+	flag.String("log-level", "info", "log level, available levels are panic, fatal, error, warn, info, debug and trace")
+	flag.String("log-formatter", "text", "log formatter, available values are text, logfmt and json")
+	flag.Bool("log-method", false, "log method name")
 	flag.Parse()
 
 	replacer := strings.NewReplacer("-", "_")
 	viper.SetEnvKeyReplacer(replacer)
 	viper.AutomaticEnv()
 	viper.BindPFlags(flag.CommandLine)
+
+	recorderproxy.InitLog(viper.GetString("log-level"), viper.GetString("log-formatter"), viper.GetBool("log-method"))
 
 	err := recorderproxy.SetCA(viper.GetString("ca"), viper.GetString("ca-key"))
 	if err != nil {
@@ -62,12 +66,10 @@ func main() {
 	proxyCount := viper.GetInt("proxy-count")
 	for i := firstPort; i < (firstPort + proxyCount); i++ {
 		r := recorderproxy.NewRecorderProxy(i, conn, timeout, cacheAddr)
-		r.SetVerbose(*verbose)
 		r.Start()
 	}
 
 	fmt.Printf("Veidemann recorder proxy started\n")
-	fmt.Printf("Verbose: %t\n", *verbose)
 
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt)

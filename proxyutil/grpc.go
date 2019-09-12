@@ -38,9 +38,9 @@ func (h *sh) TagRPC(c context.Context, i *stats.RPCTagInfo) context.Context {
 func (h *sh) HandleRPC(c context.Context, s stats.RPCStats) {
 	switch v := s.(type) {
 	case *stats.Begin:
-		recorderproxy.LogWithComponent(h.service).Printf("!!!! B HandleRPC: %v\n", v.BeginTime)
+		recorderproxy.LogWithComponent(h.service).Printf("Begin HandleRPC: %v\n", v.BeginTime)
 	case *stats.End:
-		recorderproxy.LogWithComponent(h.service).Printf("!!!! E HandleRPC: %v, %v, %v\n", v.BeginTime, v.EndTime, v.Error)
+		recorderproxy.LogWithComponent(h.service).Printf("End HandleRPC: %v, %v, %v\n", v.BeginTime, v.EndTime, v.Error)
 	case *stats.OutPayload:
 		recorderproxy.LogWithComponent(h.service).Printf("HandleRPC: %T\n", v.Payload)
 	default:
@@ -56,7 +56,9 @@ func (h *sh) TagConn(c context.Context, i *stats.ConnTagInfo) context.Context {
 func (h *sh) HandleConn(c context.Context, s stats.ConnStats) {
 	switch v := s.(type) {
 	case *stats.ConnBegin:
-		recorderproxy.LogWithComponent(h.service).Printf("HandleConn: isclient %v\n", v.IsClient())
+		recorderproxy.LogWithComponent(h.service).Printf("Begin HandleConn: isclient %v\n", v.IsClient())
+	case *stats.ConnEnd:
+		recorderproxy.LogWithComponent(h.service).Printf("End HandleConn: isclient %v\n", v.IsClient())
 	default:
 		recorderproxy.LogWithComponent(h.service).Printf("HandleConn: isclient %v %T\n", s.IsClient(), s)
 	}

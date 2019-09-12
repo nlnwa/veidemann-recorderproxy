@@ -268,11 +268,11 @@ func (f *TextFormatter) printColored(b *bytes.Buffer, entry *logrus.Entry, keys 
 		}
 
 		if fileVal == "" {
-			caller = funcVal
+			caller = " " + funcVal
 		} else if funcVal == "" {
-			caller = fileVal
+			caller = " " + fileVal
 		} else {
-			caller = fileVal + " " + funcVal
+			caller = " " + fileVal + " " + funcVal
 		}
 	}
 
@@ -291,10 +291,10 @@ func (f *TextFormatter) printColored(b *bytes.Buffer, entry *logrus.Entry, keys 
 		session = strconv.FormatInt(sess.(int64), 10)
 	}
 
-	fmt.Fprintf(b, "\x1b[%dm%s\x1b[0m[%09d]%s \x1b[%dm%-8.8s\x1b[0m %2s %-44s ",
-		levelColor, levelText, int(entry.Time.Sub(baseTimestamp)/time.Nanosecond), caller, compColor, compName, session, entry.Message)
+	fmt.Fprintf(b, "\x1b[%dm%s\x1b[0m[%09d]\x1b[%dm%-8.8s\x1b[0m%2s%s %-44s ",
+		levelColor, levelText, int(entry.Time.Sub(baseTimestamp)/time.Nanosecond), compColor, compName, session, caller, entry.Message)
 	for _, k := range keys {
-		if k == "component" {
+		if k == "component" || k == "session" {
 			continue
 		}
 		v := data[k]

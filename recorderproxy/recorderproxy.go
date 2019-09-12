@@ -68,10 +68,8 @@ type RecorderProxy struct {
 	sess int64
 	// KeepDestinationHeaders indicates the proxy should retain any headers present in the http.Response before proxying
 	KeepDestinationHeaders bool
-	// setting Verbose to true will log information on each request sent to the proxy
-	Verbose         bool
-	NonproxyHandler http.Handler
-	RoundTripper    *RpRoundTripper
+	NonproxyHandler        http.Handler
+	RoundTripper           *RpRoundTripper
 
 	// ConnectDial will be used to create TCP connections for CONNECT requests
 	ConnectDial       func(addr string) (*tls.Conn, error)
@@ -121,11 +119,6 @@ func (proxy *RecorderProxy) Start() {
 	}()
 
 	fmt.Printf("Proxy %v started on port %v\n", proxy.id, proxy.addr)
-}
-
-func (proxy *RecorderProxy) SetVerbose(v bool) {
-	proxy.Verbose = v
-	proxy.RoundTripper.trace = v
 }
 
 func (proxy *RecorderProxy) filterRequest(req *http.Request, ctx *RecordContext) (*http.Request, *http.Response) {
@@ -304,7 +297,6 @@ func NewResponse(r *http.Request, contentType string, status int, body string) *
 
 type RpRoundTripper struct {
 	*http.Transport
-	trace bool
 }
 
 func NewRpRoundTripper() *RpRoundTripper {
@@ -317,7 +309,7 @@ func NewRpRoundTripper() *RpRoundTripper {
 
 func (r *RpRoundTripper) RoundTrip(req *http.Request, ctx *RecordContext) (response *http.Response, e error) {
 	var transport http.RoundTripper
-	if r.trace {
+	if log.GetLevel() >= log.DebugLevel {
 		transport, req = DecorateRequest(r.Transport, req, ctx)
 	} else {
 		transport = r.Transport
