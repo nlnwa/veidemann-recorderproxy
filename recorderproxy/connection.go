@@ -18,6 +18,7 @@ package recorderproxy
 
 import (
 	"context"
+	grpc_opentracing "github.com/grpc-ecosystem/go-grpc-middleware/tracing/opentracing"
 	browsercontrollerV1 "github.com/nlnwa/veidemann-api-go/browsercontroller/v1"
 	contentwriterV1 "github.com/nlnwa/veidemann-api-go/contentwriter/v1"
 	dnsresolverV1 "github.com/nlnwa/veidemann-api-go/dnsresolver/v1"
@@ -63,7 +64,12 @@ func (c *Connections) Connect(contentWriterHost, contentWriterPort, dnsResolverH
 
 	log.Printf("Proxy is using contentwriter at: %s, dns resolver at: %s and browser controller at: %s", contentWriterAddr, dnsResolverAddr, browserControllerAddr)
 
-	opts = append(opts, grpc.WithInsecure(), grpc.WithBlock())
+	opts = append(opts,
+		grpc.WithInsecure(),
+		grpc.WithBlock(),
+		grpc.WithUnaryInterceptor(grpc_opentracing.UnaryClientInterceptor()),
+		grpc.WithStreamInterceptor(grpc_opentracing.StreamClientInterceptor()),
+	)
 
 	dialCtx, dialCancel := context.WithTimeout(context.Background(), connectTimeout)
 	defer dialCancel()

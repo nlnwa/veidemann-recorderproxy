@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 	"github.com/nlnwa/veidemann-recorderproxy/recorderproxy"
+	"github.com/nlnwa/veidemann-recorderproxy/tracing"
+	"github.com/opentracing/opentracing-go"
 	flag "github.com/spf13/pflag"
 	"github.com/spf13/viper"
 	"log"
@@ -41,6 +43,10 @@ func main() {
 	viper.BindPFlags(flag.CommandLine)
 
 	recorderproxy.InitLog(viper.GetString("log-level"), viper.GetString("log-formatter"), viper.GetBool("log-method"))
+
+	tracer, closer := tracing.Init("Recorder Proxy")
+	opentracing.SetGlobalTracer(tracer)
+	defer closer.Close()
 
 	err := recorderproxy.SetCA(viper.GetString("ca"), viper.GetString("ca-key"))
 	if err != nil {

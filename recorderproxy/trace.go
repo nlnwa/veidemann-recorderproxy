@@ -18,6 +18,8 @@ package recorderproxy
 
 import (
 	"crypto/tls"
+	"github.com/opentracing/opentracing-go"
+	"github.com/opentracing/opentracing-go/log"
 	"net/http"
 	"net/http/httptrace"
 )
@@ -92,6 +94,10 @@ func (t *transport) ConnectDone(network, addr string, err error) {
 
 func (t *transport) TLSHandshakeStart() {
 	t.log.Println("TLS Handshake start")
+	span := opentracing.SpanFromContext(t.current.Context())
+	span.LogFields(
+		log.String("event", "TLSHandshakeStart"),
+	)
 }
 
 func (t *transport) TLSHandshakeDone(state tls.ConnectionState, err error) {
@@ -99,4 +105,11 @@ func (t *transport) TLSHandshakeDone(state tls.ConnectionState, err error) {
 	for _, c := range state.PeerCertificates {
 		t.log.Printf("TLS peer cert: %v\n", c.Issuer)
 	}
+	span := opentracing.SpanFromContext(t.current.Context())
+	span.LogFields(
+		log.String("event", "TLSHandshakeDone"),
+		log.String("host", state.ServerName),
+		log.Bool("complete", state.HandshakeComplete),
+		log.Error(err),
+	)
 }

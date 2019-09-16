@@ -17,6 +17,8 @@
 package recorderproxy
 
 import (
+	"github.com/opentracing/opentracing-go"
+	"github.com/opentracing/opentracing-go/ext"
 	"io"
 	"net/http"
 )
@@ -35,16 +37,27 @@ func (proxy *RecorderProxy) handleHttp(w http.ResponseWriter, r *http.Request) {
 
 	if resp == nil {
 		removeProxyHeaders(ctx, r)
+		span, _ := opentracing.StartSpanFromContext(r.Context(), "http upstream request")
+		ext.HTTPMethod.Set(span, r.Method)
+		ext.HTTPUrl.Set(span, r.URL.String())
 		resp, err = proxy.RoundTripper.RoundTrip(r, ctx)
 		if err != nil {
+			ext.Error.Set(span, true)
+			span.LogKV("event", "error", "message", err.Error())
 			ctx.Error = err
 			resp = proxy.filterResponse(nil, ctx)
 			if resp == nil {
 				ctx.SessionLogger().Debugf("error read response %v %v:", r.URL.Host, err.Error())
 				http.Error(w, err.Error(), 500)
+				span.Finish()
 				return
 			}
 		}
+		span.SetTag(string(ext.HTTPStatusCode), resp.StatusCode)
+		if l, e := resp.Location(); e == nil {
+			span.SetTag("http.location", l)
+		}
+		span.Finish()
 		ctx.SessionLogger().Debugf("Received response %v", resp.Status)
 	}
 	origBody := resp.Body

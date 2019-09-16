@@ -20,11 +20,15 @@ import (
 	"context"
 	"crypto/sha1"
 	"fmt"
+	"github.com/grpc-ecosystem/go-grpc-middleware"
+	grpc_ctxtags "github.com/grpc-ecosystem/go-grpc-middleware/tags"
+	"github.com/grpc-ecosystem/go-grpc-middleware/tracing/opentracing"
 	browsercontrollerV1 "github.com/nlnwa/veidemann-api-go/browsercontroller/v1"
 	configV1 "github.com/nlnwa/veidemann-api-go/config/v1"
 	contentwriterV1 "github.com/nlnwa/veidemann-api-go/contentwriter/v1"
 	dnsresolverV1 "github.com/nlnwa/veidemann-api-go/dnsresolver/v1"
 	"github.com/nlnwa/veidemann-recorderproxy/recorderproxy"
+	"github.com/nlnwa/veidemann-recorderproxy/tracing"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -55,6 +59,10 @@ type GrpcServiceMock struct {
 }
 
 func NewGrpcServiceMock() *GrpcServiceMock {
+	tracer, _ := tracing.Init("Service Mocks")
+	//tracer, closer := tracing.Init("Service Mocks")
+	//defer closer.Close()
+
 	m := &GrpcServiceMock{
 		lis: bufconn.Listen(bufSize),
 		l:   &sync.Mutex{},
@@ -62,7 +70,17 @@ func NewGrpcServiceMock() *GrpcServiceMock {
 
 	m.contextDialer = grpc.WithContextDialer(m.bufDialer)
 
-	s := grpc.NewServer()
+	s := grpc.NewServer(
+		grpc.StreamInterceptor(grpc_middleware.ChainStreamServer(
+			grpc_ctxtags.StreamServerInterceptor(grpc_ctxtags.WithFieldExtractor(grpc_ctxtags.CodeGenRequestFieldExtractor)),
+			grpc_opentracing.StreamServerInterceptor(grpc_opentracing.WithTracer(tracer)),
+		)),
+		grpc.UnaryInterceptor(grpc_middleware.ChainUnaryServer(
+			grpc_ctxtags.UnaryServerInterceptor(grpc_ctxtags.WithFieldExtractor(grpc_ctxtags.CodeGenRequestFieldExtractor)),
+			grpc_opentracing.UnaryServerInterceptor(grpc_opentracing.WithTracer(tracer)),
+		)),
+	)
+
 	dnsresolverV1.RegisterDnsResolverServer(s, m)
 	contentwriterV1.RegisterContentWriterServer(s, m)
 	browsercontrollerV1.RegisterBrowserControllerServer(s, m)

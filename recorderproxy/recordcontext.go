@@ -79,7 +79,7 @@ func NewRecordContext(proxy *RecorderProxy) *RecordContext {
 }
 
 func (ctx *RecordContext) init(req *http.Request) *RecordContext {
-	cwcCtx, cwcCancel := context.WithTimeout(context.Background(), ctx.proxy.ConnectionTimeout)
+	cwcCtx, cwcCancel := context.WithTimeout(req.Context(), ctx.proxy.ConnectionTimeout)
 	cwc, err := ctx.proxy.conn.ContentWriterClient().Write(cwcCtx)
 	if err != nil {
 		ctx.SessionLogger().Warnf("Error connecting to content writer, cause: %v", err)
@@ -87,7 +87,7 @@ func (ctx *RecordContext) init(req *http.Request) *RecordContext {
 		return nil
 	}
 
-	bccCtx, bccCancel := context.WithTimeout(context.Background(), ctx.proxy.ConnectionTimeout)
+	bccCtx, bccCancel := context.WithTimeout(req.Context(), ctx.proxy.ConnectionTimeout)
 	bcc, err := ctx.proxy.conn.BrowserControllerClient().Do(bccCtx)
 	if err != nil {
 		ctx.SessionLogger().Warnf("Error connecting to browser controller, cause: %v", err)

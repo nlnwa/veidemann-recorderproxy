@@ -20,6 +20,8 @@ import (
 	"bufio"
 	"crypto/tls"
 	"crypto/x509"
+	"fmt"
+	"github.com/opentracing/opentracing-go"
 	"io"
 	"net"
 	"net/http"
@@ -64,6 +66,16 @@ func (proxy *RecorderProxy) handleHttps(w http.ResponseWriter, connectReq *http.
 	// TODO: Allow Server.Close() mechanism to shut down this connection as nicely as possible
 
 	go func() {
+		parentSpan := opentracing.SpanFromContext(connectReq.Context())
+		fmt.Println("1", parentSpan)
+		if parentSpan != nil {
+			span := opentracing.StartSpan("connect", opentracing.FollowsFrom(parentSpan.Context()))
+			c := opentracing.ContextWithSpan(connectReq.Context(), span)
+			//span, c := opentracing.StartSpanFromContext(connectReq.Context(), "connect")
+			connectReq = connectReq.WithContext(c)
+			defer span.Finish()
+		}
+
 		var remoteCert *x509.Certificate
 		remoteConn, remoteConnErr := proxy.ConnectDial(connectReq.Host)
 		if remoteConnErr != nil {
@@ -122,6 +134,7 @@ func (proxy *RecorderProxy) handleHttps(w http.ResponseWriter, connectReq *http.
 		}
 
 		ctx.SessionLogger().Debugf("Exiting on EOF")
+		fmt.Printf("************** DONE ***********\n")
 	}()
 }
 
@@ -137,6 +150,11 @@ func (proxy *RecorderProxy) handleTunneledRequest(proxyClient net.Conn, rawClien
 		ctx.SessionLogger().Warnf("Cannot read TLS request from mitm'd client %v %v", connectReq.Host, err)
 		return
 	}
+	//span := opentracing.SpanFromContext(connectReq.Context())
+	span, _ := opentracing.StartSpanFromContext(connectReq.Context(), "Jadda")
+	defer span.Finish()
+	c := opentracing.ContextWithSpan(req.Context(), span)
+	req = req.WithContext(c)
 	req.RemoteAddr = connectReq.RemoteAddr // since we're converting the request, need to carry over the original connecting IP as well
 	ctx.SessionLogger().Debugf("req %v", connectReq.Host)
 

@@ -23,6 +23,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"github.com/felixge/httpsnoop"
 	"github.com/golang/protobuf/ptypes"
 	"github.com/nlnwa/veidemann-api-go/browsercontroller/v1"
 	"github.com/nlnwa/veidemann-api-go/commons/v1"
@@ -30,10 +31,12 @@ import (
 	"github.com/nlnwa/veidemann-api-go/contentwriter/v1"
 	"github.com/nlnwa/veidemann-api-go/dnsresolver/v1"
 	"github.com/nlnwa/veidemann-api-go/frontier/v1"
+	"github.com/opentracing/opentracing-go"
 	"io"
 	"io/ioutil"
 	"regexp"
 
+	"github.com/opentracing-contrib/go-stdlib/nethttp"
 	log "github.com/sirupsen/logrus"
 	"net"
 	"net/http"
@@ -114,14 +117,19 @@ func NewRecorderProxy(port int, conn *Connections, connectionTimeout time.Durati
 func (proxy *RecorderProxy) Start() {
 	fmt.Printf("Starting proxy %v...\n", proxy.id)
 
+	tracer := opentracing.GlobalTracer()
 	go func() {
-		log.Fatalf("Proxy with addr %v: %v", proxy.addr, http.ListenAndServe(proxy.addr, proxy))
+		log.Fatalf("Proxy with addr %v: %v", proxy.addr, http.ListenAndServe(proxy.addr, nethttp.Middleware(tracer, proxy)))
 	}()
 
 	fmt.Printf("Proxy %v started on port %v\n", proxy.id, proxy.addr)
 }
 
-func (proxy *RecorderProxy) filterRequest(req *http.Request, ctx *RecordContext) (*http.Request, *http.Response) {
+func (proxy *RecorderProxy) filterRequest(reqOrig *http.Request, ctx *RecordContext) (*http.Request, *http.Response) {
+	span, c := opentracing.StartSpanFromContext(reqOrig.Context(), "filterRequest")
+	defer span.Finish()
+	req := reqOrig.WithContext(c)
+
 	var prolog bytes.Buffer
 	writeRequestProlog(req, &prolog)
 
@@ -169,7 +177,7 @@ func (proxy *RecorderProxy) filterRequest(req *http.Request, ctx *RecordContext)
 		if v.Cancel == "Blocked by robots.txt" {
 			ctx.precludedByRobots = true
 		}
-		return req, NewResponse(req, ContentTypeText, 403, v.Cancel)
+		return reqOrig, NewResponse(reqOrig, ContentTypeText, 403, v.Cancel)
 	}
 
 	executionId = bcReply.GetNew().CrawlExecutionId
@@ -194,7 +202,7 @@ func (proxy *RecorderProxy) filterRequest(req *http.Request, ctx *RecordContext)
 		Host:          host,
 		Port:          int32(port),
 	}
-	c, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	c, cancel := context.WithTimeout(req.Context(), 10*time.Second)
 	defer cancel()
 	dnsResp, err := proxy.conn.DnsResolverClient().Resolve(c, dnsReq)
 	if err != nil {
@@ -226,14 +234,17 @@ func (proxy *RecorderProxy) filterRequest(req *http.Request, ctx *RecordContext)
 	contentType := req.Header.Get("Content-Type")
 	bodyWrapper, err := WrapBody(req.Body, REQUEST, ctx, 0, -1, contentType, contentwriter.RecordType_REQUEST, prolog.Bytes())
 	if err != nil {
-		return req, NewResponse(req, ContentTypeText, http.StatusBadGateway, "Veidemann proxy lost connection to GRPC services"+err.Error())
+		return reqOrig, NewResponse(req, ContentTypeText, http.StatusBadGateway, "Veidemann proxy lost connection to GRPC services"+err.Error())
 	}
-	req.Body = bodyWrapper
+	reqOrig.Body = bodyWrapper
 
-	return req, nil
+	return reqOrig, nil
 }
 
 func (proxy *RecorderProxy) filterResponse(respOrig *http.Response, ctx *RecordContext) (resp *http.Response) {
+	span, _ := opentracing.StartSpanFromContext(respOrig.Request.Context(), "filterResponse")
+	defer span.Finish()
+
 	resp = respOrig
 	ctx.Resp = resp
 	if resp == nil {
@@ -426,10 +437,72 @@ func removeProxyHeaders(ctx *RecordContext, r *http.Request) {
 
 // Standard net/http function. Shouldn't be used directly, http.Serve will use it.
 func (proxy *RecorderProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+
+	hooks := httpsnoop.Hooks{
+		WriteHeader: func(next httpsnoop.WriteHeaderFunc) httpsnoop.WriteHeaderFunc {
+			return func(code int) {
+				next(code)
+				fmt.Printf("WRITE HEADER %v\n--------------------------------\n", code)
+			}
+		},
+
+		Header: func(next httpsnoop.HeaderFunc) httpsnoop.HeaderFunc {
+			return func() http.Header {
+				h := next()
+				fmt.Printf("HEADER: %v\n---------------------\n", h)
+				return h
+			}
+		},
+
+		Write: func(next httpsnoop.WriteFunc) httpsnoop.WriteFunc {
+			return func(p []byte) (int, error) {
+				n, err := next(p)
+				fmt.Printf("\n%d !!! %s\n", n, p[:10])
+				return n, err
+			}
+		},
+
+		ReadFrom: func(next httpsnoop.ReadFromFunc) httpsnoop.ReadFromFunc {
+			return func(src io.Reader) (int64, error) {
+				n, err := next(src)
+				fmt.Printf("\nREAD %d !!!\n", n)
+				return n, err
+			}
+		},
+
+		CloseNotify: func(next httpsnoop.CloseNotifyFunc) httpsnoop.CloseNotifyFunc {
+			return func() <-chan bool {
+				c := next()
+				fmt.Printf("\n¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤\n\n")
+				return c
+			}
+		},
+
+		Hijack: func(next httpsnoop.HijackFunc) httpsnoop.HijackFunc {
+			return func() (conn net.Conn, writer *bufio.ReadWriter, e error) {
+				c, w, e := next()
+				fmt.Printf("\n¤¤¤¤¤¤¤¤¤¤ HIJACK ¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤\n\n")
+				return &xx{c}, w, e
+			}
+		},
+	}
+
+	w = httpsnoop.Wrap(w, hooks)
+
 	//r.Header["X-Forwarded-For"] = w.RemoteAddr()
 	if r.Method == "CONNECT" {
 		proxy.handleHttps(w, r)
 	} else {
 		proxy.handleHttp(w, r)
 	}
+}
+
+type xx struct {
+	net.Conn
+}
+
+func (x xx) Write(b []byte) (n int, err error) {
+	n, err = x.Conn.Write(b)
+	//fmt.Printf("\n%d !!! WRITE HIJACK:::\n", n)
+	return n, err
 }

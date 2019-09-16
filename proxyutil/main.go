@@ -18,19 +18,26 @@ package main
 
 import (
 	"crypto/tls"
+	"fmt"
 	"github.com/nlnwa/veidemann-recorderproxy/errors"
 	"github.com/nlnwa/veidemann-recorderproxy/recorderproxy"
+	"github.com/nlnwa/veidemann-recorderproxy/tracing"
+	"github.com/opentracing-contrib/go-stdlib/nethttp"
+	"github.com/opentracing/opentracing-go"
 	log "github.com/sirupsen/logrus"
 	flag "github.com/spf13/pflag"
 	"github.com/spf13/viper"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"os/signal"
 	"time"
 )
 
 var (
 	acceptAllCerts = &tls.Config{InsecureSkipVerify: true}
+	server         *httptest.Server
 )
 
 func main() {
@@ -43,6 +50,10 @@ func main() {
 
 	recorderproxy.InitLog(viper.GetString("log-level"), viper.GetString("log-formatter"), viper.GetBool("log-method"))
 
+	tracer, closer := tracing.Init("Recorder Proxy")
+	opentracing.SetGlobalTracer(tracer)
+	defer closer.Close()
+
 	if flag.NArg() != 1 || viper.GetBool("help") {
 		flag.Usage()
 		return
@@ -53,7 +64,7 @@ func main() {
 	grpcServices := NewGrpcServiceMock()
 	client := newProxy(grpcServices)
 
-	clientTimeout := 1500 * time.Millisecond
+	clientTimeout := 1500 * time.Second
 
 	statusCode, got, err := get(url, client, clientTimeout)
 	if grpcServices.doneBC != nil {
@@ -72,6 +83,19 @@ func main() {
 	if err != nil {
 		errors.LogError(errors.InvalidRequest, err.Error())
 	}
+
+	// Run until interrupted
+	c := make(chan os.Signal, 1)
+	signal.Notify(c, os.Interrupt)
+	func() {
+		for sig := range c {
+			// sig is a ^C, handle it
+			fmt.Printf("\nSIG: %v\n", sig)
+			return
+		}
+	}()
+
+	server.Close()
 }
 
 func newProxy(mock *GrpcServiceMock) *http.Client {
@@ -86,10 +110,11 @@ func newProxy(mock *GrpcServiceMock) *http.Client {
 	//spAddr := spUrl.Host
 	spAddr := ""
 	proxy := recorderproxy.NewRecorderProxy(0, conn, 1*time.Minute, spAddr)
-	p := httptest.NewServer(proxy)
+	p := httptest.NewServer(nethttp.Middleware(opentracing.GlobalTracer(), proxy))
 	proxyUrl, _ := url.Parse(p.URL)
 	tr := &http.Transport{TLSClientConfig: acceptAllCerts, Proxy: http.ProxyURL(proxyUrl), DisableKeepAlives: true}
 	client := &http.Client{Transport: tr}
 
+	server = p
 	return client
 }
