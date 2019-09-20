@@ -24,6 +24,8 @@ import (
 	"github.com/nlnwa/veidemann-api-go/config/v1"
 	"github.com/nlnwa/veidemann-api-go/contentwriter/v1"
 	"github.com/nlnwa/veidemann-api-go/frontier/v1"
+	"github.com/nlnwa/veidemann-recorderproxy/logger"
+	"github.com/nlnwa/veidemann-recorderproxy/serviceconnections"
 	log "github.com/sirupsen/logrus"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -32,7 +34,6 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
-	"sync/atomic"
 	"time"
 )
 
@@ -48,7 +49,7 @@ type RecordContext struct {
 	session int64
 	proxy   *RecorderProxy
 
-	conn              *Connections
+	conn              *serviceconnections.Connections
 	cwcCancelFunc     context.CancelFunc
 	cwc               contentwriter.ContentWriter_WriteClient
 	bcc               browsercontroller.BrowserController_DoClient
@@ -69,13 +70,14 @@ type RecordContext struct {
 var i int
 
 func NewRecordContext(proxy *RecorderProxy) *RecordContext {
-	ctx := &RecordContext{
-		session: atomic.AddInt64(&proxy.sess, 1),
-		proxy:   proxy,
-		conn:    proxy.conn,
-	}
-
-	return ctx
+	return nil
+	//ctx := &RecordContext{
+	//	//session: atomic.AddInt64(&proxy.sess, 1),
+	//	proxy:   proxy,
+	//	conn:    proxy.conn,
+	//}
+	//
+	//return ctx
 }
 
 func (ctx *RecordContext) init(req *http.Request) *RecordContext {
@@ -245,8 +247,8 @@ func (ctx *RecordContext) Close() {
 	}
 }
 
-func (ctx *RecordContext) SessionLogger() *Logger {
-	return &Logger{log.WithFields(
+func (ctx *RecordContext) SessionLogger() *logger.Logger {
+	return &logger.Logger{log.WithFields(
 		log.Fields{
 			"session":   ctx.session,
 			"component": "PROXY",

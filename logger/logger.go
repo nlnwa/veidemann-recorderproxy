@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package recorderproxy
+package logger
 
 import (
 	"flag"

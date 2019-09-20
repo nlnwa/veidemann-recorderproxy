@@ -27,7 +27,7 @@ import (
 	configV1 "github.com/nlnwa/veidemann-api-go/config/v1"
 	contentwriterV1 "github.com/nlnwa/veidemann-api-go/contentwriter/v1"
 	dnsresolverV1 "github.com/nlnwa/veidemann-api-go/dnsresolver/v1"
-	"github.com/nlnwa/veidemann-recorderproxy/recorderproxy"
+	"github.com/nlnwa/veidemann-recorderproxy/logger"
 	"github.com/nlnwa/veidemann-recorderproxy/tracing"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -100,7 +100,7 @@ func (s *GrpcServiceMock) bufDialer(context.Context, string) (net.Conn, error) {
 func (s *GrpcServiceMock) addBcRequest(r *browsercontrollerV1.DoRequest) {
 	s.l.Lock()
 
-	recorderproxy.LogWithComponent("MOCK:BrowserController").Print(r)
+	logger.LogWithComponent("MOCK:BrowserController").Print(r)
 
 	//s.requests.BrowserControllerRequests = append(s.requests.BrowserControllerRequests, r)
 	s.l.Unlock()
@@ -109,7 +109,7 @@ func (s *GrpcServiceMock) addBcRequest(r *browsercontrollerV1.DoRequest) {
 func (s *GrpcServiceMock) addDnsRequest(r *dnsresolverV1.ResolveRequest) {
 	s.l.Lock()
 
-	recorderproxy.LogWithComponent("MOCK:DNSResolver").Print(r)
+	logger.LogWithComponent("MOCK:DNSResolver").Print(r)
 
 	//s.requests.DnsResolverRequests = append(s.requests.DnsResolverRequests, r)
 	s.l.Unlock()
@@ -120,12 +120,12 @@ func (s *GrpcServiceMock) addCwRequest(r *contentwriterV1.WriteRequest) {
 
 	switch v := r.Value.(type) {
 	case *contentwriterV1.WriteRequest_Payload:
-		recorderproxy.LogWithComponent("MOCK:ContentWriter").
+		logger.LogWithComponent("MOCK:ContentWriter").
 			Printf("payload:<record_num:%d data:\"%s... (%d bytes)\" >\n",
 				v.Payload.RecordNum, v.Payload.Data[0:5], len(v.Payload.Data))
 
 	default:
-		recorderproxy.LogWithComponent("MOCK:ContentWriter").Print(r)
+		logger.LogWithComponent("MOCK:ContentWriter").Print(r)
 	}
 
 	//s.requests.ContentWriterRequests = append(s.requests.ContentWriterRequests, r)
@@ -140,6 +140,7 @@ func (s *GrpcServiceMock) clear() {
 func (s *GrpcServiceMock) Resolve(ctx context.Context, in *dnsresolverV1.ResolveRequest) (*dnsresolverV1.ResolveReply, error) {
 	s.addDnsRequest(in)
 
+	fmt.Printf("Looking up %v\n", in.Host)
 	ips, err := net.LookupIP(in.Host)
 	if err == nil {
 		for _, ip := range ips {

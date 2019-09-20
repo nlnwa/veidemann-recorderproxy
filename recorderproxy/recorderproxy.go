@@ -23,34 +23,29 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
-	"github.com/felixge/httpsnoop"
-	"github.com/golang/protobuf/ptypes"
-	"github.com/nlnwa/veidemann-api-go/browsercontroller/v1"
+	"github.com/getlantern/mitm"
+	"github.com/getlantern/proxy"
+	"github.com/getlantern/proxy/filters"
 	"github.com/nlnwa/veidemann-api-go/commons/v1"
-	"github.com/nlnwa/veidemann-api-go/config/v1"
-	"github.com/nlnwa/veidemann-api-go/contentwriter/v1"
-	"github.com/nlnwa/veidemann-api-go/dnsresolver/v1"
-	"github.com/nlnwa/veidemann-api-go/frontier/v1"
-	"github.com/opentracing/opentracing-go"
+	"github.com/nlnwa/veidemann-recorderproxy/serviceconnections"
 	"io"
 	"io/ioutil"
 	"regexp"
+	"strconv"
+	"sync/atomic"
 
-	"github.com/opentracing-contrib/go-stdlib/nethttp"
 	log "github.com/sirupsen/logrus"
 	"net"
 	"net/http"
-	"net/url"
-	"strconv"
 	"strings"
 	"time"
 )
 
 const (
-	ENCODING         = "Accept-Encoding"
-	EXECUTION_ID     = "veidemann_eid"
-	JOB_EXECUTION_ID = "veidemann_jeid"
-	COLLECTION_ID    = "veidemann_cid"
+	ENCODING           = "Accept-Encoding"
+	CRAWL_EXECUTION_ID = "veidemann_eid"
+	JOB_EXECUTION_ID   = "veidemann_jeid"
+	COLLECTION_ID      = "veidemann_cid"
 )
 
 const (
@@ -59,233 +54,182 @@ const (
 )
 
 var proxyCount int32
+var acceptAllCerts = &tls.Config{InsecureSkipVerify: true}
 
 type RecorderProxy struct {
 	id                int32
-	addr              string
-	conn              *Connections
+	Addr              string
+	conn              *serviceconnections.Connections
 	ConnectionTimeout time.Duration
-
-	// session variable must be aligned in i386
-	// see http://golang.org/src/pkg/sync/atomic/doc.go#L41
-	sess int64
-	// KeepDestinationHeaders indicates the proxy should retain any headers present in the http.Response before proxying
-	KeepDestinationHeaders bool
-	NonproxyHandler        http.Handler
-	RoundTripper           *RpRoundTripper
+	RoundTripper      *RpRoundTripper
 
 	// ConnectDial will be used to create TCP connections for CONNECT requests
 	ConnectDial       func(addr string) (*tls.Conn, error)
 	dnsResolverDialer *dnsResolverDialer
 }
 
-func NewRecorderProxy(port int, conn *Connections, connectionTimeout time.Duration, cache string) *RecorderProxy {
+func NewRecorderProxy(addr string, port int, conn *serviceconnections.Connections, connectionTimeout time.Duration, cache string) *RecorderProxy {
+	filterChain := filters.Join(
+		&NonproxyFilter{},
+		&TracingInitFilter{},
+		&ContextInitFilter{conn},
+		&RecorderFilter{proxyCount, conn.DnsResolverClient()},
+	)
+
+	opts := &proxy.Opts{
+		Dial: func(context context.Context, isConnect bool, network, addr string) (conn net.Conn, err error) {
+			timeout := 30 * time.Second
+			deadline, hasDeadline := context.Deadline()
+			if hasDeadline {
+				timeout = deadline.Sub(time.Now())
+			}
+			conn, err = net.DialTimeout(network, addr, timeout)
+			if err != nil {
+				log.Errorf("??????????????? %v\n", err)
+			}
+			//if !isConnect {
+			conn = WrapConn(conn, "upstream")
+			//}
+			return conn, err
+		},
+		//IdleTimeout: 3 * time.Second,
+		Filter: filterChain,
+		ShouldMITM: func(req *http.Request, upstreamAddr string) bool {
+			fmt.Printf("SHOULD MITMT FOR %v %v\n", req.URL, upstreamAddr)
+			return true
+		},
+		MITMOpts: &mitm.Opts{
+			Domains:         []string{"*"},
+			ClientTLSConfig: acceptAllCerts,
+			ServerTLSConfig: acceptAllCerts,
+			Organization:    "Veidemann Recorder Proxy",
+			CertFile:        "/tmp/rpcert.pem",
+		},
+		OnError: func(ctx filters.Context, req *http.Request, read bool, err error) *http.Response {
+			fmt.Printf("ON ERROR: %v\n", err)
+			//return nil
+			res, _, _ := filters.Fail(ctx, req, 555, err)
+			return res
+		},
+		OKWaitsForUpstream:  true,
+		OKSendsServerTiming: true,
+	}
+
+	p, err := proxy.New(opts)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	l, err := net.Listen("tcp", addr+":"+strconv.Itoa(port))
+	if err != nil {
+		if l, err = net.Listen(addr+"tcp6", ":"+strconv.Itoa(port)); err != nil {
+			panic(fmt.Sprintf("httptest: failed to listen on port %v: %v", port, err))
+		}
+	}
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	go func() {
+		defer l.Close()
+		//err := p.Serve(l)
+		err := Serve(p, l)
+		if err != nil {
+			log.Fatal(err)
+		}
+	}()
+
+	fmt.Printf("#####################################\n")
+
 	r := &RecorderProxy{
-		id:                proxyCount,
-		conn:              conn,
-		addr:              ":" + strconv.Itoa(port),
-		ConnectionTimeout: connectionTimeout,
-
-		NonproxyHandler: http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-			http.Error(w, "This is a proxy server. Does not respond to non-proxy requests.", 500)
-		}),
-		RoundTripper: NewRpRoundTripper(),
+		id:   proxyCount,
+		conn: conn,
+		Addr: l.Addr().String(),
+		//addr: ":" + strconv.Itoa(port),
 	}
-
-	if cache != "" {
-		cu, _ := url.Parse("http://" + cache)
-		r.RoundTripper.Proxy = http.ProxyURL(cu)
-	}
-
 	proxyCount++
 
-	if conn.dnsResolverHost != "" {
-		r.dnsResolverDialer, err = NewDnsResolverDialer(conn.dnsResolverHost, conn.dnsResolverPort)
-		if err != nil {
-			log.Fatalf("Could not create CONNECT dialer: \"%s\"", err)
-		}
-		r.ConnectDial = r.dnsResolverDialer.DialTls
-	} else {
-		r.ConnectDial = func(addr string) (conn *tls.Conn, e error) {
-			return tls.Dial("tcp", addr, &tls.Config{InsecureSkipVerify: true})
-		}
-	}
-
 	return r
+
+	//r := &RecorderProxy{
+	//	id:                proxyCount,
+	//	conn:              conn,
+	//	addr:              ":" + strconv.Itoa(port),
+	//	ConnectionTimeout: connectionTimeout,
+	//
+	//	RoundTripper: NewRpRoundTripper(),
+	//}
+	//
+	//if cache != "" {
+	//	cu, _ := url.Parse("http://" + cache)
+	//	r.RoundTripper.Proxy = http.ProxyURL(cu)
+	//}
+	//
+	//proxyCount++
+	//
+	//if conn.dnsResolverHost != "" {
+	//	r.dnsResolverDialer, err = NewDnsResolverDialer(conn.dnsResolverHost, conn.dnsResolverPort)
+	//	if err != nil {
+	//		log.Fatalf("Could not create CONNECT dialer: \"%s\"", err)
+	//	}
+	//	r.ConnectDial = r.dnsResolverDialer.DialTls
+	//} else {
+	//	r.ConnectDial = func(addr string) (conn *tls.Conn, e error) {
+	//		return tls.Dial("tcp", addr, &tls.Config{InsecureSkipVerify: true})
+	//	}
+	//}
+	//
+	//return r
+}
+
+func Serve(proxy proxy.Proxy, l net.Listener) error {
+	for {
+		co, err := l.Accept()
+		conn := WrapConn(co, "downstream")
+		if err != nil {
+			log.Errorf("unable to accept: %v", err)
+			return err
+			//return errors.New("Unable to accept: %v", err)
+		}
+		//go proxy.Handle(context.Background(), conn, conn)
+		//c, _ := context.WithTimeout(context.Background(), 7*time.Second)
+		c, cancel := context.WithCancel(context.Background())
+		conn.CancelFunc = cancel
+		go proxy.Handle(c, conn, conn)
+	}
 }
 
 func (proxy *RecorderProxy) Start() {
 	fmt.Printf("Starting proxy %v...\n", proxy.id)
 
-	tracer := opentracing.GlobalTracer()
-	go func() {
-		log.Fatalf("Proxy with addr %v: %v", proxy.addr, http.ListenAndServe(proxy.addr, nethttp.Middleware(tracer, proxy)))
-	}()
+	//tracer := opentracing.GlobalTracer()
+	//go func() {
+	//	log.Fatalf("Proxy with addr %v: %v", proxy.addr, http.ListenAndServe(proxy.addr, nethttp.Middleware(tracer, proxy)))
+	//}()
 
-	fmt.Printf("Proxy %v started on port %v\n", proxy.id, proxy.addr)
+	fmt.Printf("Proxy %v started, listening on %v\n", proxy.id, proxy.Addr)
 }
 
-func (proxy *RecorderProxy) filterRequest(reqOrig *http.Request, ctx *RecordContext) (*http.Request, *http.Response) {
-	span, c := opentracing.StartSpanFromContext(reqOrig.Context(), "filterRequest")
-	defer span.Finish()
-	req := reqOrig.WithContext(c)
-
-	var prolog bytes.Buffer
-	writeRequestProlog(req, &prolog)
-
-	var collectionRef *config.ConfigRef
-
-	executionId := req.Header.Get(EXECUTION_ID)
-	jobExecutionId := req.Header.Get(JOB_EXECUTION_ID)
-
-	if req.Header.Get(COLLECTION_ID) != "" {
-		collectionRef = &config.ConfigRef{
-			Kind: config.Kind_collection,
-			Id:   req.Header.Get(COLLECTION_ID),
-		}
-	}
-
-	ctx.FetchTimesTamp = time.Now()
-	fetchTimeStamp, _ := ptypes.TimestampProto(ctx.FetchTimesTamp)
-
-	ctx.crawlLog = &frontier.CrawlLog{
-		RequestedUri:   req.URL.String(),
-		FetchTimeStamp: fetchTimeStamp,
-	}
-
-	bccRequest := &browsercontroller.DoRequest{
-		Action: &browsercontroller.DoRequest_New{
-			New: &browsercontroller.RegisterNew{
-				ProxyId:          proxy.id,
-				Uri:              req.URL.String(),
-				CrawlExecutionId: executionId,
-				JobExecutionId:   jobExecutionId,
-				CollectionRef:    collectionRef,
-			},
-		},
-	}
-
-	err := ctx.bcc.Send(bccRequest)
-	if err != nil {
-		log.Fatalf("Error register with browser controller, cause: %v", err)
-	}
-
-	bcReply := <-ctx.bccMsgChan
-
-	switch v := bcReply.Action.(type) {
-	case *browsercontroller.DoReply_Cancel:
-		if v.Cancel == "Blocked by robots.txt" {
-			ctx.precludedByRobots = true
-		}
-		return reqOrig, NewResponse(reqOrig, ContentTypeText, 403, v.Cancel)
-	}
-
-	executionId = bcReply.GetNew().CrawlExecutionId
-	jobExecutionId = bcReply.GetNew().GetJobExecutionId()
-	collectionRef = bcReply.GetNew().CollectionRef
-	ctx.replacementScript = bcReply.GetNew().ReplacementScript
-
-	uri := req.URL
-
-	host := uri.Hostname()
-	ps := uri.Port()
-	var port = 0
-	if ps != "" {
-		port, err = strconv.Atoi(ps)
-		if err != nil {
-			ctx.Close()
-			panic(fmt.Sprintf("Error parsing port for %v, cause: %v", uri, err))
-		}
-	}
-	dnsReq := &dnsresolver.ResolveRequest{
-		CollectionRef: collectionRef,
-		Host:          host,
-		Port:          int32(port),
-	}
-	c, cancel := context.WithTimeout(req.Context(), 10*time.Second)
-	defer cancel()
-	dnsResp, err := proxy.conn.DnsResolverClient().Resolve(c, dnsReq)
-	if err != nil {
-		ctx.Close()
-		panic(fmt.Sprintf("Error looking up %v, cause: %v", uri.Host, err))
-	}
-
-	req.Header.Set(ENCODING, "identity")
-	req.Header.Set(EXECUTION_ID, executionId)
-	req.Header.Set(JOB_EXECUTION_ID, jobExecutionId)
-
-	ctx.meta = &contentwriter.WriteRequest_Meta{
-		Meta: &contentwriter.WriteRequestMeta{
-			RecordMeta:     map[int32]*contentwriter.WriteRequestMeta_RecordMeta{},
-			TargetUri:      req.URL.String(),
-			ExecutionId:    executionId,
-			IpAddress:      dnsResp.TextualIp,
-			CollectionRef:  collectionRef,
-			FetchTimeStamp: fetchTimeStamp,
-		},
-	}
-
-	ctx.crawlLog.JobExecutionId = jobExecutionId
-	ctx.crawlLog.ExecutionId = executionId
-	ctx.crawlLog.IpAddress = dnsResp.TextualIp
-	ctx.crawlLog.RequestedUri = req.URL.String()
-	ctx.crawlLog.FetchTimeStamp = fetchTimeStamp
-
-	contentType := req.Header.Get("Content-Type")
-	bodyWrapper, err := WrapBody(req.Body, REQUEST, ctx, 0, -1, contentType, contentwriter.RecordType_REQUEST, prolog.Bytes())
-	if err != nil {
-		return reqOrig, NewResponse(req, ContentTypeText, http.StatusBadGateway, "Veidemann proxy lost connection to GRPC services"+err.Error())
-	}
-	reqOrig.Body = bodyWrapper
-
-	return reqOrig, nil
+type testConn struct {
+	net.Conn
+	t          string
+	closed     *int32
+	CancelFunc func()
 }
 
-func (proxy *RecorderProxy) filterResponse(respOrig *http.Response, ctx *RecordContext) (resp *http.Response) {
-	span, _ := opentracing.StartSpanFromContext(respOrig.Request.Context(), "filterResponse")
-	defer span.Finish()
-
-	resp = respOrig
-	ctx.Resp = resp
-	if resp == nil {
-		ctx.Close()
-		panic(http.ErrAbortHandler)
+func (conn *testConn) Close() (err error) {
+	if atomic.CompareAndSwapInt32(conn.closed, 0, 1) {
+		log.Infof("Close %s Conn %v %v %T\n", conn.t, conn.LocalAddr(), conn.RemoteAddr(), conn.Conn)
+		if conn.CancelFunc != nil {
+			conn.CancelFunc()
+		}
 	}
+	return conn.Conn.Close()
+}
 
-	if ctx.precludedByRobots {
-		ctx.Close()
-		return resp
-	}
-
-	if ctx.Error != nil && strings.HasPrefix(ctx.Error.Error(), "unknown error from browser controller") {
-		ctx.Close()
-		return resp
-	}
-
-	if strings.Contains(resp.Header.Get("X-Cache-Lookup"), "HIT") {
-		ctx.foundInCache = true
-
-		//span.log("Loaded from cache");
-	}
-
-	var prolog bytes.Buffer
-	writeResponseProlog(resp, &prolog)
-
-	contentType := resp.Header.Get("Content-Type")
-	statusCode := int32(resp.StatusCode)
-	var err error
-	bodyWrapper, err := WrapBody(resp.Body, RESPONSE, ctx, 1, statusCode, contentType, contentwriter.RecordType_RESPONSE, prolog.Bytes())
-	if err != nil {
-		ctx.Close()
-		return NewResponse(resp.Request, ContentTypeText, http.StatusBadGateway, "Veidemann proxy lost connection to GRPC services\n"+err.Error())
-	}
-
-	if ctx.replacementScript != nil {
-		resp.ContentLength = int64(len(ctx.replacementScript.Script))
-	}
-	resp.Body = bodyWrapper
-
-	return resp
+func WrapConn(conn net.Conn, label string) *testConn {
+	i := int32(0)
+	return &testConn{Conn: conn, t: label, closed: &i}
 }
 
 func NewResponse(r *http.Request, contentType string, status int, body string) *http.Response {
@@ -417,7 +361,7 @@ func isEof(r *bufio.Reader) bool {
 
 func removeProxyHeaders(ctx *RecordContext, r *http.Request) {
 	r.RequestURI = "" // this must be reset when serving a request with the client
-	ctx.SessionLogger().Debugf("Sending request %v %v", r.Method, r.URL.String())
+	//ctx.SessionLogger().Debugf("Sending request %v %v", r.Method, r.URL.String())
 	// If no Accept-Encoding header exists, Transport will add the headers it can accept
 	// and would wrap the response body with the relevant reader.
 	r.Header.Del("Accept-Encoding")
@@ -433,76 +377,4 @@ func removeProxyHeaders(ctx *RecordContext, r *http.Request) {
 	//   options that are desired for that particular connection and MUST NOT
 	//   be communicated by proxies over further connections.
 	r.Header.Del("Connection")
-}
-
-// Standard net/http function. Shouldn't be used directly, http.Serve will use it.
-func (proxy *RecorderProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-
-	hooks := httpsnoop.Hooks{
-		WriteHeader: func(next httpsnoop.WriteHeaderFunc) httpsnoop.WriteHeaderFunc {
-			return func(code int) {
-				next(code)
-				fmt.Printf("WRITE HEADER %v\n--------------------------------\n", code)
-			}
-		},
-
-		Header: func(next httpsnoop.HeaderFunc) httpsnoop.HeaderFunc {
-			return func() http.Header {
-				h := next()
-				fmt.Printf("HEADER: %v\n---------------------\n", h)
-				return h
-			}
-		},
-
-		Write: func(next httpsnoop.WriteFunc) httpsnoop.WriteFunc {
-			return func(p []byte) (int, error) {
-				n, err := next(p)
-				fmt.Printf("\n%d !!! %s\n", n, p[:10])
-				return n, err
-			}
-		},
-
-		ReadFrom: func(next httpsnoop.ReadFromFunc) httpsnoop.ReadFromFunc {
-			return func(src io.Reader) (int64, error) {
-				n, err := next(src)
-				fmt.Printf("\nREAD %d !!!\n", n)
-				return n, err
-			}
-		},
-
-		CloseNotify: func(next httpsnoop.CloseNotifyFunc) httpsnoop.CloseNotifyFunc {
-			return func() <-chan bool {
-				c := next()
-				fmt.Printf("\n¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤\n\n")
-				return c
-			}
-		},
-
-		Hijack: func(next httpsnoop.HijackFunc) httpsnoop.HijackFunc {
-			return func() (conn net.Conn, writer *bufio.ReadWriter, e error) {
-				c, w, e := next()
-				fmt.Printf("\n¤¤¤¤¤¤¤¤¤¤ HIJACK ¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤\n\n")
-				return &xx{c}, w, e
-			}
-		},
-	}
-
-	w = httpsnoop.Wrap(w, hooks)
-
-	//r.Header["X-Forwarded-For"] = w.RemoteAddr()
-	if r.Method == "CONNECT" {
-		proxy.handleHttps(w, r)
-	} else {
-		proxy.handleHttp(w, r)
-	}
-}
-
-type xx struct {
-	net.Conn
-}
-
-func (x xx) Write(b []byte) (n int, err error) {
-	n, err = x.Conn.Write(b)
-	//fmt.Printf("\n%d !!! WRITE HIJACK:::\n", n)
-	return n, err
 }

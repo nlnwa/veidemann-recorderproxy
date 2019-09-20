@@ -18,6 +18,7 @@ package recorderproxy
 
 import (
 	"crypto/tls"
+	"github.com/nlnwa/veidemann-recorderproxy/logger"
 	"github.com/opentracing/opentracing-go"
 	"github.com/opentracing/opentracing-go/log"
 	"net/http"
@@ -27,7 +28,7 @@ import (
 func DecorateRequest(roundTripper http.RoundTripper, req *http.Request, ctx *RecordContext) (http.RoundTripper, *http.Request) {
 	t := &transport{wrapped: roundTripper}
 	if ctx == nil {
-		t.log = StandardLogger().WithComponent("CLIENT")
+		t.log = logger.StandardLogger().WithComponent("CLIENT")
 	} else {
 		t.log = ctx.SessionLogger()
 	}
@@ -52,7 +53,7 @@ func DecorateRequest(roundTripper http.RoundTripper, req *http.Request, ctx *Rec
 type transport struct {
 	wrapped http.RoundTripper
 	current *http.Request
-	log     *Logger
+	log     *logger.Logger
 }
 
 // RoundTrip wraps http.DefaultTransport.RoundTrip to keep track

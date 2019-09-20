@@ -164,46 +164,46 @@ func (proxy *RecorderProxy) handleTunneledRequest(proxyClient net.Conn, rawClien
 
 	ctx.Req = req
 
-	req, resp := proxy.filterRequest(req, ctx)
-	if resp == nil && ctx.Error != nil {
-		handleResponseError(ctx.Error, ctx)
-	} else {
-		if resp == nil {
-			if err != nil {
-				ctx.SessionLogger().Warnf("Illegal URL https://%s%s", connectReq.Host, req.URL.Path)
-				return
-			}
-			removeProxyHeaders(ctx, req)
-			resp, err = ctx.proxy.RoundTripper.RoundTrip(req, ctx)
-			if err != nil {
-				ctx.SessionLogger().Warnf("Cannot read TLS response from mitm'd server %v, URL: %s", err, req.URL)
-				if err.Error() == "Connect failed" {
-					defer func() {
-						e := proxyClient.Close()
-						if e != nil {
-							ctx.SessionLogger().Debugf("Error while closing proxy client: %v\n", e)
-						}
-					}()
-				}
-				return
-			}
-			ctx.SessionLogger().Debugf("resp %v", resp.Status)
-		}
-		resp = proxy.filterResponse(resp, ctx)
-		ctx.SessionLogger().Debugf("Copying response to client %v [%d]", resp.Status, resp.StatusCode)
-		defer func() {
-			e := resp.Body.Close()
-			if e != nil {
-				ctx.SessionLogger().Warnf("Error while closing body: %v\n", e)
-			}
-		}()
-
-		if err := resp.Write(rawClientTls); err != nil {
-			ctx.SessionLogger().Warnf("Cannot write TLS response from mitm'd client: %v, URL: %s", err, req.URL)
-			ctx.SendErrorCode(-5011, "CANCELED_BY_BROWSER", "Veidemann recorder proxy lost connection to client")
-			return
-		}
-	}
+	//req, resp := proxy.filterRequest(req, ctx)
+	//if resp == nil && ctx.Error != nil {
+	//	handleResponseError(ctx.Error, ctx)
+	//} else {
+	//	if resp == nil {
+	//		if err != nil {
+	//			ctx.SessionLogger().Warnf("Illegal URL https://%s%s", connectReq.Host, req.URL.Path)
+	//			return
+	//		}
+	//		removeProxyHeaders(ctx, req)
+	//		resp, err = ctx.proxy.RoundTripper.RoundTrip(req, ctx)
+	//		if err != nil {
+	//			ctx.SessionLogger().Warnf("Cannot read TLS response from mitm'd server %v, URL: %s", err, req.URL)
+	//			if err.Error() == "Connect failed" {
+	//				defer func() {
+	//					e := proxyClient.Close()
+	//					if e != nil {
+	//						ctx.SessionLogger().Debugf("Error while closing proxy client: %v\n", e)
+	//					}
+	//				}()
+	//			}
+	//			return
+	//		}
+	//		ctx.SessionLogger().Debugf("resp %v", resp.Status)
+	//	}
+	//	resp = proxy.filterResponse(resp, ctx)
+	//	ctx.SessionLogger().Debugf("Copying response to client %v [%d]", resp.Status, resp.StatusCode)
+	//	defer func() {
+	//		e := resp.Body.Close()
+	//		if e != nil {
+	//			ctx.SessionLogger().Warnf("Error while closing body: %v\n", e)
+	//		}
+	//	}()
+	//
+	//	if err := resp.Write(rawClientTls); err != nil {
+	//		ctx.SessionLogger().Warnf("Cannot write TLS response from mitm'd client: %v, URL: %s", err, req.URL)
+	//		ctx.SendErrorCode(-5011, "CANCELED_BY_BROWSER", "Veidemann recorder proxy lost connection to client")
+	//		return
+	//	}
+	//}
 	if req.Close {
 		ctx.SessionLogger().Debugf("Non-persistent connection; closing")
 		return

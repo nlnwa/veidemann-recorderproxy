@@ -18,7 +18,9 @@ package main
 
 import (
 	"context"
-	"github.com/nlnwa/veidemann-recorderproxy/recorderproxy"
+	"fmt"
+	"github.com/nlnwa/veidemann-recorderproxy/logger"
+	"github.com/opentracing/opentracing-go"
 	"google.golang.org/grpc/stats"
 )
 
@@ -27,39 +29,65 @@ type sh struct {
 }
 
 func NewStatsHandler(serviceName string) stats.Handler {
-	return &sh{"GRPC:" + serviceName}
+	fmt.Println("¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤")
+	return &sh{"gRPC:" + serviceName}
 }
 
 func (h *sh) TagRPC(c context.Context, i *stats.RPCTagInfo) context.Context {
-	recorderproxy.LogWithComponent(h.service).Printf("TagRPC: %s %v\n", i.FullMethodName, i.FailFast)
+	logger.LogWithComponent(h.service).Printf("TagRPC: %s %v\n", i.FullMethodName, i.FailFast)
 	return c
 }
 
 func (h *sh) HandleRPC(c context.Context, s stats.RPCStats) {
+	span := opentracing.SpanFromContext(c)
 	switch v := s.(type) {
 	case *stats.Begin:
-		recorderproxy.LogWithComponent(h.service).Printf("Begin HandleRPC: %v\n", v.BeginTime)
+		logger.LogWithComponent(h.service).Printf("Begin HandleRPC: %v\n", v.BeginTime)
+		span.LogKV("event", fmt.Sprintf("%s Begin", h.service))
 	case *stats.End:
-		recorderproxy.LogWithComponent(h.service).Printf("End HandleRPC: %v, %v, %v\n", v.BeginTime, v.EndTime, v.Error)
+		logger.LogWithComponent(h.service).Printf("End HandleRPC: %v, %v, %v\n", v.BeginTime, v.EndTime, v.Error)
+		span.LogKV("event", fmt.Sprintf("%s End %v", h.service, v.Trailer))
+	case *stats.InHeader:
+		logger.LogWithComponent(h.service).Printf("InHeader HandleRPC: %v\n", v)
+	case *stats.InPayload:
+		logger.LogWithComponent(h.service).Printf("InPayload HandleRPC: %T\n", v.Payload)
+		span.LogKV(
+			"xx", fmt.Sprintf("%T", v.Payload),
+			"data", fmt.Sprintf("%v", v.Payload),
+			"component", h.service,
+			"direction", "in",
+		)
+	case *stats.InTrailer:
+		logger.LogWithComponent(h.service).Printf("InTrailer HandleRPC: %v\n", v)
+	case *stats.OutHeader:
+		logger.LogWithComponent(h.service).Printf("OutHeader HandleRPC: %v\n", v)
 	case *stats.OutPayload:
-		recorderproxy.LogWithComponent(h.service).Printf("HandleRPC: %T\n", v.Payload)
+		logger.LogWithComponent(h.service).Printf("OutPayload HandleRPC: %T\n", v.Payload)
+		span.LogKV(
+			"xx", fmt.Sprintf("%T", v.Payload),
+			"data", fmt.Sprintf("%v", v.Payload),
+			"component", h.service,
+			"direction", "out",
+		)
+	case *stats.OutTrailer:
+		logger.LogWithComponent(h.service).Printf("OutTrailer HandleRPC: %v\n", v)
 	default:
-		recorderproxy.LogWithComponent(h.service).Printf("HandleRPC: isclient %v %T\n", s.IsClient(), s)
+		logger.LogWithComponent(h.service).Printf("HandleRPC: isclient %v %T\n", s.IsClient(), s)
 	}
 }
 
 func (h *sh) TagConn(c context.Context, i *stats.ConnTagInfo) context.Context {
-	recorderproxy.LogWithComponent(h.service).Printf("TagConn: %s --> %s\n", i.LocalAddr, i.RemoteAddr)
+	logger.LogWithComponent(h.service).Printf("TagConn: %s --> %s\n", i.LocalAddr, i.RemoteAddr)
 	return c
 }
 
 func (h *sh) HandleConn(c context.Context, s stats.ConnStats) {
 	switch v := s.(type) {
 	case *stats.ConnBegin:
-		recorderproxy.LogWithComponent(h.service).Printf("Begin HandleConn: isclient %v\n", v.IsClient())
+		logger.LogWithComponent(h.service).Printf("Begin HandleConn: isclient %v\n", v.IsClient())
 	case *stats.ConnEnd:
-		recorderproxy.LogWithComponent(h.service).Printf("End HandleConn: isclient %v\n", v.IsClient())
+		logger.LogWithComponent(h.service).Printf("End HandleConn: isclient %v\n", v.IsClient())
 	default:
-		recorderproxy.LogWithComponent(h.service).Printf("HandleConn: isclient %v %T\n", s.IsClient(), s)
+		logger.LogWithComponent(h.service).Printf("HandleConn: isclient %v %T\n", s.IsClient(), s)
 	}
 }
