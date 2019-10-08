@@ -20,7 +20,6 @@ import (
 	"github.com/getlantern/proxy/filters"
 	"github.com/opentracing/opentracing-go"
 	"github.com/opentracing/opentracing-go/ext"
-	"github.com/opentracing/opentracing-go/log"
 	"net/http"
 )
 
@@ -28,7 +27,9 @@ import (
 type TracingInitFilter struct{}
 
 func (f *TracingInitFilter) Apply(ctx filters.Context, req *http.Request, next filters.Next) (resp *http.Response, context filters.Context, err error) {
-	if req.Method != http.MethodConnect {
+	if req.Method == http.MethodConnect {
+		resp, context, err = next(ctx, req)
+	} else {
 		tr := opentracing.GlobalTracer()
 		spanCtx, _ := tr.Extract(opentracing.HTTPHeaders, opentracing.HTTPHeadersCarrier(req.Header))
 		span := tr.StartSpan("HTTP "+req.Method, ext.RPCServerOption(spanCtx))
@@ -43,11 +44,7 @@ func (f *TracingInitFilter) Apply(ctx filters.Context, req *http.Request, next f
 		req = req.WithContext(ctx)
 		defer span.Finish()
 
-		span.LogFields(log.String("event", "upstream request"))
 		resp, context, err = next(ctx, req)
-		span.LogFields(log.String("event", "upstream response"))
-		return
-	} else {
-		return next(ctx, req)
 	}
+	return
 }

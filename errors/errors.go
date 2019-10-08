@@ -18,32 +18,50 @@ package errors
 
 import (
 	"fmt"
-	"github.com/sirupsen/logrus"
+	"github.com/nlnwa/veidemann-api-go/commons/v1"
+	"net/http"
 )
 import gerrs "github.com/pkg/errors"
 
-// proxyError is the struct of recorder proxy error
-type proxyError struct {
-	code    ErrorCode
-	message string
-	cause   error
+// ProxyError is the struct of recorder proxy error
+type ProxyError struct {
+	code       ErrorCode
+	message    string
+	detail     string
+	cause      error // the root cause for this error
+	statusCode int   // http status code
 }
 
-func (e *proxyError) Error() string {
-	errMsg := fmt.Sprintf("%s %s", e.code, e.message)
+func (e *ProxyError) Error() string {
+	errMsg := fmt.Sprintf("Code: %s, Msg: %s", e.code, e.message)
+	if e.detail != "" {
+		errMsg = errMsg + ", Detail: " + e.detail
+	}
 	if nil == e.cause {
 		return errMsg
 	}
 
-	return errMsg + ": " + e.cause.Error()
+	return errMsg + ", Cause: " + e.cause.Error()
 }
 
-func (e *proxyError) Cause() error {
+func (e *ProxyError) Cause() error {
 	return e.cause
 }
 
-func (e *proxyError) Code() ErrorCode {
+func (e *ProxyError) Code() ErrorCode {
 	return e.code
+}
+
+func (e *ProxyError) Message() string {
+	return e.message
+}
+
+func (e *ProxyError) Detail() string {
+	return e.detail
+}
+
+func (e *ProxyError) HttpStatusCode() string {
+	return e.detail
 }
 
 // Cause returns the cause error of this error
@@ -59,50 +77,103 @@ func Code(err error) ErrorCode {
 
 	cd, ok := err.(coder)
 	if !ok {
-		return UnknownError
+		return RuntimeException
 	}
 	return cd.Code()
 }
 
-// Errorf formats an error with format
-func Errorf(code ErrorCode, format string, a ...interface{}) error {
-	return &proxyError{
-		code:    code,
-		message: fmt.Sprintf(format, a...),
+// Message returns the error message
+func Message(err error) string {
+	type msg interface {
+		Message() string
+	}
+
+	m, ok := err.(msg)
+	if !ok {
+		fmt.Printf("ERROR FROM MSG: %v\n", err)
+		return err.Error()
+	}
+	return m.Message()
+}
+
+// Detail returns the error detail message
+func Detail(err error) string {
+	type det interface {
+		Detail() string
+	}
+
+	d, ok := err.(det)
+	if !ok {
+		return err.Error()
+	}
+	return d.Detail()
+}
+
+// HttpStatusCode returns the http status code which will be sent to client
+func HttpStatusCode(err error) int {
+	type st interface {
+		HttpStatusCode() int
+	}
+
+	s, ok := err.(st)
+	if !ok {
+		return http.StatusServiceUnavailable
+	}
+	return s.HttpStatusCode()
+}
+
+// Error constructs a new error
+func Error(code ErrorCode, message, detail string) error {
+	return &ProxyError{
+		code:       code,
+		message:    message,
+		detail:     detail,
+		statusCode: http.StatusServiceUnavailable,
+	}
+}
+
+// Wrap waps an error with an error and a message
+func Wrap(err error, code ErrorCode, message, detail string) error {
+	if err == nil {
+		return nil
+	}
+	return &ProxyError{
+		code:       code,
+		message:    message,
+		cause:      err,
+		detail:     detail,
+		statusCode: http.StatusServiceUnavailable,
 	}
 }
 
 // Error constructs a new error
-func Error(code ErrorCode, message string) error {
-	return &proxyError{
-		code:    code,
-		message: message,
+func ErrorInternal(code ErrorCode, message, detail string) error {
+	return &ProxyError{
+		code:       code,
+		message:    message,
+		detail:     detail,
+		statusCode: http.StatusBadGateway,
 	}
-}
-
-// Wrapf warps an error with a error code and a format message
-func Wrapf(err error, code ErrorCode, format string, a ...interface{}) error {
-	return Wrap(err, code, fmt.Sprintf(format, a...))
 }
 
 // Wrap waps an error with an error and a message
-func Wrap(err error, code ErrorCode, message string) error {
+func WrapInternalError(err error, code ErrorCode, message, detail string) error {
 	if err == nil {
 		return nil
 	}
-	return &proxyError{
-		code:    code,
-		message: message,
-		cause:   err,
+	return &ProxyError{
+		code:       code,
+		message:    message,
+		cause:      err,
+		detail:     detail,
+		statusCode: http.StatusBadGateway,
 	}
 }
 
-func LogErrorf(code ErrorCode, format string, a ...interface{}) {
-	LogError(code, fmt.Sprintf(format, a...))
-}
-
-func LogError(code ErrorCode, message string) {
-	logrus.WithFields(logrus.Fields{
-		"code": code,
-	}).Error(message)
+func AsCommonsError(err error) *commons.Error {
+	return &commons.Error{
+		Code:   Code(err).Int32(),
+		Msg:    Message(err),
+		Detail: Detail(err),
+	}
 }

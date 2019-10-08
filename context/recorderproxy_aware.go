@@ -17,7 +17,9 @@
 package context
 
 import (
+	"context"
 	"github.com/getlantern/proxy/filters"
+	"github.com/nlnwa/veidemann-recorderproxy/logger"
 	"net/url"
 )
 
@@ -27,82 +29,96 @@ const (
 	ctxKeyRecorderProxyAware = ctxKey("recorderProxyAware")
 	ctxKeyRCTX               = ctxKey("recordContext")
 	ctxKeyHost               = ctxKey("host")
-	ctxKeyPort               = ctxKey("port")
 	ctxKeyUrl                = ctxKey("url")
+	ctxKeyConnectErr         = ctxKey("connectErr")
 )
 
-func recordProxyDataAware(ctx filters.Context) (filters.Context, map[ctxKey]interface{}) {
+func getRecordProxyDataAware(ctx context.Context) map[ctxKey]interface{} {
+	var rpData map[ctxKey]interface{}
+	a := ctx.Value(ctxKeyRecorderProxyAware)
+	if a == nil {
+		logger.Log.Panic("BUG: Tried to get RecordProxyDataAware from uninitialized context")
+	}
+	rpData = a.(map[ctxKey]interface{})
+	return rpData
+}
+
+func RecordProxyDataAware(ctx context.Context) context.Context {
 	var rpData map[ctxKey]interface{}
 	a := ctx.Value(ctxKeyRecorderProxyAware)
 	if a != nil {
 		rpData = a.(map[ctxKey]interface{})
 	} else {
 		rpData = make(map[ctxKey]interface{}, 4)
-		ctx = ctx.WithValue(ctxKeyRecorderProxyAware, rpData)
+		ctx = context.WithValue(ctx, ctxKeyRecorderProxyAware, rpData)
 	}
-	return ctx, rpData
+	return ctx
 }
 
-func SetHostPort(ctx filters.Context, host, port string) filters.Context {
-	c, a := recordProxyDataAware(ctx)
+func SetHost(ctx context.Context, host string) {
+	a := getRecordProxyDataAware(ctx)
 	a[ctxKeyHost] = host
-	a[ctxKeyPort] = port
-	return c
 }
 
-func SetUri(ctx filters.Context, uri *url.URL) filters.Context {
-	c, a := recordProxyDataAware(ctx)
+func SetUri(ctx context.Context, uri *url.URL) {
+	a := getRecordProxyDataAware(ctx)
 	a[ctxKeyUrl] = uri
-	return c
 }
 
-func ResolveAndSetUri(ctx filters.Context, uri *url.URL) (filters.Context, *url.URL) {
-	c, a := recordProxyDataAware(ctx)
-	oldUri, _ := a[ctxKeyUrl].(*url.URL)
-	if oldUri == nil {
-		a[ctxKeyUrl] = uri
-		return c, uri
-	}
-	newUri := oldUri.ResolveReference(uri)
-	a[ctxKeyUrl] = uri
-	return c, newUri
-}
-
-func SetRecordContext(ctx filters.Context, rc *RecordContext) filters.Context {
-	c, a := recordProxyDataAware(ctx)
+func SetRecordContext(ctx context.Context, rc *RecordContext) {
+	a := getRecordProxyDataAware(ctx)
 	a[ctxKeyRCTX] = rc
 
 	// Start listener for cancellation
-	go rc.cleanup(c)
-
-	return c
+	//go rc.cleanup(c)
 }
 
-func GetHost(ctx filters.Context) (host string) {
+func SetConnectError(ctx context.Context, err error) {
+	a := getRecordProxyDataAware(ctx)
+	a[ctxKeyConnectErr] = err
+}
+
+func SetConnectErrorIfNotExists(ctx context.Context, err error) {
+	a := getRecordProxyDataAware(ctx)
+	if a[ctxKeyConnectErr] == nil {
+		a[ctxKeyConnectErr] = err
+	}
+}
+
+func GetHost(ctx context.Context) (host string) {
 	host, _ = getValue(ctx, ctxKeyHost).(string)
 	return
 }
 
-func GetPort(ctx filters.Context) (port string) {
-	port, _ = getValue(ctx, ctxKeyPort).(string)
-	return
-}
-
-func GetUri(ctx filters.Context) (uri *url.URL) {
+func GetUri(ctx context.Context) (uri *url.URL) {
 	uri, _ = getValue(ctx, ctxKeyUrl).(*url.URL)
 	return
 }
 
-func GetRecordContext(ctx filters.Context) (recordContext *RecordContext) {
+func GetRecordContext(ctx context.Context) (recordContext *RecordContext) {
 	recordContext, _ = getValue(ctx, ctxKeyRCTX).(*RecordContext)
 	return
 }
 
-func getValue(ctx filters.Context, key ctxKey) interface{} {
+func GetConnectError(ctx context.Context) (err error) {
+	err, _ = getValue(ctx, ctxKeyConnectErr).(error)
+	return
+}
+
+func getValue(ctx context.Context, key ctxKey) interface{} {
 	a := ctx.Value(ctxKeyRecorderProxyAware)
 	if a == nil {
 		return nil
 	}
 	rpData := a.(map[ctxKey]interface{})
 	return rpData[key]
+}
+
+func WrapIfNecessary(ctx context.Context) filters.Context {
+	fc, ok := ctx.(filters.Context)
+	if ok {
+		return fc
+	} else {
+		return filters.AdaptContext(ctx)
+	}
 }

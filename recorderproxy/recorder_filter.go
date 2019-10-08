@@ -18,235 +18,126 @@ package recorderproxy
 
 import (
 	"bytes"
-	"fmt"
 	"github.com/getlantern/proxy/filters"
 	"github.com/golang/protobuf/ptypes"
-	"github.com/nlnwa/veidemann-api-go/browsercontroller/v1"
-	"github.com/nlnwa/veidemann-api-go/config/v1"
 	"github.com/nlnwa/veidemann-api-go/contentwriter/v1"
-	"github.com/nlnwa/veidemann-api-go/dnsresolver/v1"
 	dnsresolverV1 "github.com/nlnwa/veidemann-api-go/dnsresolver/v1"
-	"github.com/nlnwa/veidemann-api-go/frontier/v1"
+	"github.com/nlnwa/veidemann-recorderproxy/constants"
 	context2 "github.com/nlnwa/veidemann-recorderproxy/context"
+	"github.com/nlnwa/veidemann-recorderproxy/errors"
 	"github.com/opentracing/opentracing-go"
 	"github.com/opentracing/opentracing-go/log"
-	"github.com/sirupsen/logrus"
 	"net/http"
-	"strconv"
 	"strings"
-	"time"
 )
 
 // RecorderFilter is a filter which returns an error if the proxy is accessed as if it where a web server and not a proxy.
 type RecorderFilter struct {
 	proxyId           int32
 	DnsResolverClient dnsresolverV1.DnsResolverClient
+	hasNextProxy      bool
 }
 
 func (f *RecorderFilter) Apply(ctx filters.Context, req *http.Request, next filters.Next) (resp *http.Response, context filters.Context, err error) {
-	if req.Method != http.MethodConnect {
-		fmt.Printf("NOT SHORT CIRCUT %v %v %v\n", req.URL, ctx.IsMITMing(), ctx.RequestNumber())
+	l := context2.LogWithContextAndRequest(ctx, req, "FLT:rec")
+	connectErr := context2.GetConnectError(ctx)
+	if connectErr != nil {
+		resp, context, err = next(ctx, req)
+		return
+	}
 
-		rc := context2.GetRecordContext(ctx)
-		span := opentracing.SpanFromContext(ctx)
-		//defer span.Finish()
-
-		fmt.Printf("REQ HEADERS:\n%v\n", req.Header)
-		span.LogFields(log.String("event", "rec upstream request"))
-
-		req, resp = f.filterRequest(ctx, span, req, rc)
-		if resp != nil {
-			fmt.Printf("SHORT")
-			return resp, ctx, nil
-		}
-
-		roundTripSpan, roundtripCtx := opentracing.StartSpanFromContext(ctx, "Roundtrip upstream")
-		resp, context, err = next(filters.AdaptContext(roundtripCtx), req)
-		roundTripSpan.Finish()
-		if err != nil {
-			fmt.Printf("ERROR IN RECORDER FILTER %v\n", err)
-		}
-
-		resp = f.filterResponse(span, resp, rc)
-
-		span.LogFields(log.String("event", "rec upstream response"))
-	} else {
+	if req.Method == http.MethodConnect {
 		// Handle HTTPS CONNECT
 		resp, context, err = next(ctx, req)
 		if err != nil {
-			logrus.Errorf("Could not CONNECT to upstream server: %v. Error: %v\n", req.Host, err)
-			resp, ctx, err = filters.ShortCircuit(ctx, req, &http.Response{
-				StatusCode: http.StatusOK,
-			})
+			l.WithError(err).Infof("Could not CONNECT to upstream server: %v", req.Host)
 		}
+		resp, ctx, err = filters.ShortCircuit(ctx, req, &http.Response{
+			StatusCode: http.StatusOK,
+		})
+	} else {
+		rc := context2.GetRecordContext(ctx)
+		span := opentracing.SpanFromContext(ctx)
+
+		span.LogFields(log.String("event", "rec upstream request"))
+
+		req, err = f.filterRequest(ctx, span, req, rc)
+		if err != nil {
+			return handleRequestError(ctx, req, err)
+		}
+
+		context = ctx
+		roundTripSpan, roundtripCtx := opentracing.StartSpanFromContext(ctx, "Roundtrip upstream")
+		resp, roundtripCtx, err = next(context2.WrapIfNecessary(roundtripCtx), req)
+		roundTripSpan.Finish()
+
+		if err != nil {
+			return
+		}
+
+		resp, err = f.filterResponse(ctx, span, resp, rc)
+		if err != nil {
+			return handleRequestError(ctx, req, err)
+		}
+
+		span.LogFields(log.String("event", "rec upstream response"))
 	}
 	return
 }
 
-func (f *RecorderFilter) filterRequest(c filters.Context, span opentracing.Span, req *http.Request, ctx *context2.RecordContext) (*http.Request, *http.Response) {
+func (f *RecorderFilter) filterRequest(c filters.Context, span opentracing.Span, req *http.Request, rc *context2.RecordContext) (*http.Request, error) {
 	span.LogKV("event", "StartFilterRequest")
 
 	var prolog bytes.Buffer
-	errr := writeRequestProlog(req, &prolog)
-	fmt.Printf("Write Prolog error: %v\n", errr)
-	fmt.Printf("Prolog: %v\n", prolog.String())
+	err := writeRequestProlog(req, &prolog)
 
-	var collectionRef *config.ConfigRef
+	fetchTimeStamp, _ := ptypes.TimestampProto(rc.FetchTimesTamp)
+	uri := rc.Uri
 
-	executionId := req.Header.Get(CRAWL_EXECUTION_ID)
-	jobExecutionId := req.Header.Get(JOB_EXECUTION_ID)
+	req.Header.Set(constants.HeaderAcceptEncoding, "identity")
+	req.Header.Set(constants.HeaderCrawlExecutionId, rc.CrawlExecutionId)
+	req.Header.Set(constants.HeaderJobExecutionId, rc.JobExecutionId)
 
-	if req.Header.Get(COLLECTION_ID) != "" {
-		collectionRef = &config.ConfigRef{
-			Kind: config.Kind_collection,
-			Id:   req.Header.Get(COLLECTION_ID),
-		}
-		span.LogKV("event", "CollectionIdFromHeader", "CollectionId", collectionRef.Id)
-	}
-
-	ctx.FetchTimesTamp = time.Now()
-	fetchTimeStamp, _ := ptypes.TimestampProto(ctx.FetchTimesTamp)
-
-	ctx.CrawlLog = &frontier.CrawlLog{
-		RequestedUri:   req.URL.String(),
-		FetchTimeStamp: fetchTimeStamp,
-	}
-
-	bccRequest := &browsercontroller.DoRequest{
-		Action: &browsercontroller.DoRequest_New{
-			New: &browsercontroller.RegisterNew{
-				ProxyId:          f.proxyId,
-				Uri:              req.URL.String(),
-				CrawlExecutionId: executionId,
-				JobExecutionId:   jobExecutionId,
-				CollectionRef:    collectionRef,
-			},
-		},
-	}
-
-	lf := []log.Field{
-		log.String("event", "Send BrowserController New request"),
-		log.Int32("ProxyId", f.proxyId),
-		log.String("Uri", req.URL.String()),
-		log.String("CrawlExecutionId", executionId),
-		log.String("JobExecutionId", jobExecutionId),
-	}
-	if collectionRef != nil {
-		lf = append(lf, log.String("CollectionId", collectionRef.Id))
-	} else {
-		lf = append(lf, log.String("CollectionId", ""))
-	}
-	span.LogFields(lf...)
-
-	err := ctx.Bcc.Send(bccRequest)
-	if err != nil {
-		logrus.Fatalf("Error register with browser controller, cause: %v", err)
-	}
-
-	bcReply := <-ctx.BccMsgChan
-
-	switch v := bcReply.Action.(type) {
-	case *browsercontroller.DoReply_Cancel:
-		if v.Cancel == "Blocked by robots.txt" {
-			ctx.PrecludedByRobots = true
-		}
-		span.LogKV("event", "ResponseFromNew", "responseType", "Cancel")
-		return req, NewResponse(req, ContentTypeText, 403, v.Cancel)
-	case *browsercontroller.DoReply_New:
-		span.LogKV("event", "ResponseFromNew", "responseType", "New",
-			"JobExecutionId", v.New.JobExecutionId,
-			"CrawlExecutionId", v.New.CrawlExecutionId,
-			"CollectionId", v.New.CollectionRef.Id,
-			"ReplacementScript", v.New.ReplacementScript,
-		)
-		executionId = v.New.CrawlExecutionId
-		jobExecutionId = v.New.GetJobExecutionId()
-		collectionRef = v.New.CollectionRef
-		ctx.ReplacementScript = v.New.ReplacementScript
-	}
-
-	uri := context2.GetUri(c)
-	host := context2.GetHost(c)
-	ps := context2.GetPort(c)
-
-	fmt.Printf("CONTEXT: %T -- %v %v\n", req.Context(), host, ps)
-
-	var port = 0
-	if ps != "" {
-		port, err = strconv.Atoi(ps)
-		if err != nil {
-			ctx.Close()
-			panic(fmt.Sprintf("Error parsing port for %v, cause: %v", uri, err))
-		}
-	}
-	dnsReq := &dnsresolver.ResolveRequest{
-		CollectionRef: collectionRef,
-		Host:          host,
-		Port:          int32(port),
-	}
-	//c, cancel := context.WithTimeout(req.Context(), 10*time.Second)
-	//defer cancel()
-	dnsResp, err := f.DnsResolverClient.Resolve(req.Context(), dnsReq)
-	if err != nil {
-		ctx.Close()
-		panic(fmt.Sprintf("Error looking up %v, cause: %v", uri.Host, err))
-	}
-
-	req.Header.Set(ENCODING, "identity")
-	req.Header.Set(CRAWL_EXECUTION_ID, executionId)
-	req.Header.Set(JOB_EXECUTION_ID, jobExecutionId)
-
-	ctx.Meta = &contentwriter.WriteRequest_Meta{
+	rc.Meta = &contentwriter.WriteRequest_Meta{
 		Meta: &contentwriter.WriteRequestMeta{
 			RecordMeta:     map[int32]*contentwriter.WriteRequestMeta_RecordMeta{},
-			TargetUri:      req.URL.String(),
-			ExecutionId:    executionId,
-			IpAddress:      dnsResp.TextualIp,
-			CollectionRef:  collectionRef,
+			TargetUri:      uri.String(),
+			ExecutionId:    rc.CrawlExecutionId,
+			IpAddress:      rc.IP,
+			CollectionRef:  rc.CollectionRef,
 			FetchTimeStamp: fetchTimeStamp,
 		},
 	}
 
-	ctx.CrawlLog.JobExecutionId = jobExecutionId
-	ctx.CrawlLog.ExecutionId = executionId
-	ctx.CrawlLog.IpAddress = dnsResp.TextualIp
-	ctx.CrawlLog.RequestedUri = req.URL.String()
-	ctx.CrawlLog.FetchTimeStamp = fetchTimeStamp
+	rc.CrawlLog.RequestedUri = uri.String()
 
 	contentType := req.Header.Get("Content-Type")
-	bodyWrapper, err := WrapBody(req.Body, REQUEST, ctx, 0, -1, contentType, contentwriter.RecordType_REQUEST, prolog.Bytes())
+	bodyWrapper, err := WrapRequestBody(c, req.Body, contentType, prolog.Bytes())
 	if err != nil {
-		return req, NewResponse(req, ContentTypeText, http.StatusBadGateway, "Veidemann proxy lost connection to GRPC services"+err.Error())
+		e := errors.WrapInternalError(err, errors.RuntimeException, "Veidemann proxy lost connection to GRPC services", err.Error())
+		return req, e
 	}
 	req.Body = bodyWrapper
 
 	return req, nil
 }
 
-func (f *RecorderFilter) filterResponse(span opentracing.Span, respOrig *http.Response, ctx *context2.RecordContext) (resp *http.Response) {
+func (f *RecorderFilter) filterResponse(c filters.Context, span opentracing.Span, respOrig *http.Response, rc *context2.RecordContext) (*http.Response, error) {
 	span.LogKV("event", "StartFilterResponse")
 
-	resp = respOrig
-	//ctx.Resp = resp
+	resp := respOrig
 	if resp == nil {
-		ctx.Close()
 		panic(http.ErrAbortHandler)
 	}
 
-	if ctx.PrecludedByRobots {
-		ctx.Close()
-		return resp
+	if rc.Error != nil && strings.HasPrefix(rc.Error.Error(), "unknown error from browser controller") {
+		return resp, nil
 	}
 
-	if ctx.Error != nil && strings.HasPrefix(ctx.Error.Error(), "unknown error from browser controller") {
-		ctx.Close()
-		return resp
-	}
-
-	if strings.Contains(resp.Header.Get("X-Cache-Lookup"), "HIT") {
-		ctx.FoundInCache = true
-
+	if strings.Contains(resp.Header.Get("X-Cache"), "HIT") {
 		span.LogKV("event", "Loaded from cache")
+		context2.LogWithRecordContext(rc, "FLT:rec").Info("Loaded from cache")
+		rc.FoundInCache = true
 	}
 
 	var prolog bytes.Buffer
@@ -255,16 +146,16 @@ func (f *RecorderFilter) filterResponse(span opentracing.Span, respOrig *http.Re
 	contentType := resp.Header.Get("Content-Type")
 	statusCode := int32(resp.StatusCode)
 	var err error
-	bodyWrapper, err := WrapBody(resp.Body, RESPONSE, ctx, 1, statusCode, contentType, contentwriter.RecordType_RESPONSE, prolog.Bytes())
+	bodyWrapper, err := WrapResponseBody(c, resp.Body, statusCode, contentType, contentwriter.RecordType_RESPONSE, prolog.Bytes())
 	if err != nil {
-		ctx.Close()
-		return NewResponse(resp.Request, ContentTypeText, http.StatusBadGateway, "Veidemann proxy lost connection to GRPC services\n"+err.Error())
+		e := errors.WrapInternalError(err, errors.RuntimeException, "Veidemann proxy lost connection to GRPC services", err.Error())
+		return nil, e
 	}
 
-	if ctx.ReplacementScript != nil {
-		resp.ContentLength = int64(len(ctx.ReplacementScript.Script))
+	if rc.ReplacementScript != nil {
+		resp.ContentLength = int64(len(rc.ReplacementScript.Script))
 	}
 	resp.Body = bodyWrapper
 
-	return resp
+	return resp, nil
 }

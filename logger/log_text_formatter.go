@@ -291,14 +291,14 @@ func (f *TextFormatter) printColored(b *bytes.Buffer, entry *logrus.Entry, keys 
 		session = strconv.FormatInt(sess.(int64), 10)
 	}
 
-	fmt.Fprintf(b, "\x1b[%dm%s\x1b[0m[%09d]\x1b[%dm%-8.8s\x1b[0m%2s%s %-44s ",
+	_, _ = fmt.Fprintf(b, "\x1b[%dm%s\x1b[0m[%09d]\x1b[%dm%-10.10s\x1b[0m%2s%s %-44s ",
 		levelColor, levelText, int(entry.Time.Sub(baseTimestamp)/time.Nanosecond), compColor, compName, session, caller, entry.Message)
 	for _, k := range keys {
 		if k == "component" || k == "session" {
 			continue
 		}
 		v := data[k]
-		fmt.Fprintf(b, " \x1b[%dm%s\x1b[0m=", levelColor, k)
+		_, _ = fmt.Fprintf(b, " \x1b[%dm%s\x1b[0m=", levelColor, k)
 		f.appendValue(b, v)
 	}
 }

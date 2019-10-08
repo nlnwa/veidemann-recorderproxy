@@ -17,7 +17,6 @@
 package recorderproxy
 
 import (
-	"fmt"
 	"github.com/getlantern/proxy/filters"
 	context2 "github.com/nlnwa/veidemann-recorderproxy/context"
 	"github.com/nlnwa/veidemann-recorderproxy/serviceconnections"
@@ -28,39 +27,60 @@ import (
 
 // ContextInitFilter is a filter which initializes the context with sessions to external services.
 type ContextInitFilter struct {
-	conn *serviceconnections.Connections
+	conn    *serviceconnections.Connections
+	proxyId int32
 }
 
 func (f *ContextInitFilter) Apply(ctx filters.Context, req *http.Request, next filters.Next) (resp *http.Response, context filters.Context, err error) {
-	if req.Method != http.MethodConnect {
-		if context2.GetHost(ctx) == "" {
-			ctx = context2.SetHostPort(ctx, req.URL.Hostname(), req.URL.Port())
-		}
-		ctx, uri := context2.ResolveAndSetUri(ctx, req.URL)
-		fmt.Printf("URI: %s\n", uri)
+	l := context2.LogWithContextAndRequest(ctx, req, "FLT:ctx")
 
-		rc := context2.NewRecordContext()
-		ctx = context2.SetRecordContext(ctx, rc)
-		req = req.WithContext(ctx)
-		span := opentracing.SpanFromContext(ctx)
-		rc.Init(f.conn, req)
-
-		resp, context, err = next(ctx, req)
-		span.LogFields(log.String("event", "??????????"))
-		return
-	} else {
+	if req.Method == http.MethodConnect {
 		// Handle HTTPS CONNECT
-		ctx = context2.SetHostPort(ctx, req.URL.Hostname(), req.URL.Port())
+		context2.SetHost(ctx, req.URL.Hostname())
 
 		// Copy URI by value and add scheme
 		uv := *req.URL
 		uri := &uv
 		uri.Scheme = "https"
 
-		ctx, uri = context2.ResolveAndSetUri(ctx, uri)
-		fmt.Printf("*************** CONNECT URI: %s %s\n", uri, req.URL)
+		context2.SetUri(ctx, uri)
 		req = req.WithContext(ctx)
 
-		return next(ctx, req)
+		l.Debugf("Converted CONNECT request uri form %v to %v", req.URL, uri)
+		resp, context, err = next(ctx, req)
+	} else {
+		rc := context2.GetRecordContext(ctx)
+		if rc != nil {
+			rc.WaitForCompleted()
+		}
+
+		if context2.GetHost(ctx) == "" {
+			context2.SetHost(ctx, req.URL.Hostname())
+		}
+
+		uri := context2.GetUri(ctx)
+		if uri != nil {
+			uri = uri.ResolveReference(req.URL)
+		} else {
+			uri = req.URL
+		}
+
+		l.Debugf("Converted GET request uri form %v to %v", req.URL, uri)
+
+		rc = context2.NewRecordContext()
+		context2.SetRecordContext(ctx, rc)
+		req = req.WithContext(ctx)
+		span := opentracing.SpanFromContext(ctx)
+		span.LogFields(log.String("event", "Start init record context"))
+		rc.Init(f.proxyId, f.conn, req, uri)
+
+		if e := rc.RegisterNewRequest(ctx); e != nil {
+			span.LogFields(log.String("event", "Failed init record context"), log.Error(e))
+			return handleRequestError(ctx, req, e)
+		}
+		span.LogFields(log.String("event", "Finished init record context"))
+
+		resp, context, err = next(ctx, req)
 	}
+	return
 }

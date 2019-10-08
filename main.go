@@ -2,7 +2,9 @@ package main
 
 import (
 	"fmt"
+	"github.com/nlnwa/veidemann-recorderproxy/logger"
 	"github.com/nlnwa/veidemann-recorderproxy/recorderproxy"
+	"github.com/nlnwa/veidemann-recorderproxy/serviceconnections"
 	"github.com/nlnwa/veidemann-recorderproxy/tracing"
 	"github.com/opentracing/opentracing-go"
 	flag "github.com/spf13/pflag"
@@ -11,14 +13,15 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 )
 
-func init() {
-	os.Setenv("GODEBUG", os.Getenv("GODEBUG")+",tls13=1")
-}
+var startedProxies []*recorderproxy.RecorderProxy
 
 func main() {
+	flag.BoolP("help", "h", false, "Usage instructions")
+	flag.String("interface", "", "interface this proxy listens to. No value means all interfaces.")
 	flag.Int("port", 8080, "first proxy listen port")
 	flag.Int("proxy-count", 10, "number of proxies to start")
 	flag.String("content-writer-host", "localhost", "Content writer host")
@@ -40,23 +43,40 @@ func main() {
 	replacer := strings.NewReplacer("-", "_")
 	viper.SetEnvKeyReplacer(replacer)
 	viper.AutomaticEnv()
-	viper.BindPFlags(flag.CommandLine)
+	err := viper.BindPFlags(flag.CommandLine)
+	if err != nil {
+		logger.LogWithComponent("INIT").Errorf("Could not parse flags: %s", err)
+		os.Exit(1)
+	}
 
-	recorderproxy.InitLog(viper.GetString("log-level"), viper.GetString("log-formatter"), viper.GetBool("log-method"))
+	if viper.GetBool("help") {
+		flag.Usage()
+		return
+	}
+
+	err = logger.InitLog(viper.GetString("log-level"), viper.GetString("log-formatter"), viper.GetBool("log-method"))
+	if err != nil {
+		logger.LogWithComponent("INIT").Errorf("Could not init logger: %s", err)
+		flag.Usage()
+		os.Exit(1)
+	}
 
 	tracer, closer := tracing.Init("Recorder Proxy")
-	opentracing.SetGlobalTracer(tracer)
-	defer closer.Close()
-
-	err := recorderproxy.SetCA(viper.GetString("ca"), viper.GetString("ca-key"))
-	if err != nil {
-		log.Fatal(err)
+	if tracer != nil {
+		opentracing.SetGlobalTracer(tracer)
+		defer closer.Close()
 	}
+
+	//err := recorderproxy.SetCA(viper.GetString("ca"), viper.GetString("ca-key"))
+	//if err != nil {
+	//	log.Fatal(err)
+	//}
 
 	timeout := viper.GetDuration("timeout")
 	cacheAddr := viper.GetString("cache-host") + ":" + viper.GetString("cache-port")
 
-	conn := recorderproxy.NewConnections()
+	conn := serviceconnections.NewConnections()
+	defer conn.Close()
 	err = conn.Connect(viper.GetString("content-writer-host"), viper.GetString("content-writer-port"),
 		viper.GetString("dns-resolver-host"), viper.GetString("dns-resolver-port"),
 		viper.GetString("browser-controller-host"), viper.GetString("browser-controller-port"),
@@ -68,22 +88,31 @@ func main() {
 
 	fmt.Printf("Using cache at %s\n", cacheAddr)
 
+	iface := viper.GetString("interface")
 	firstPort := viper.GetInt("port")
 	proxyCount := viper.GetInt("proxy-count")
-	for i := firstPort; i < (firstPort + proxyCount); i++ {
-		r := recorderproxy.NewRecorderProxy(i, conn, timeout, cacheAddr)
+	for i := 0; i < proxyCount; i++ {
+		r := recorderproxy.NewRecorderProxy(i, iface, firstPort, conn, timeout, cacheAddr)
 		r.Start()
+		startedProxies = append(startedProxies, r)
 	}
 
 	fmt.Printf("Veidemann recorder proxy started\n")
 
 	c := make(chan os.Signal, 1)
-	signal.Notify(c, os.Interrupt)
+	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
 	func() {
 		for sig := range c {
 			// sig is a ^C, handle it
 			fmt.Printf("SIG: %v\n", sig)
+			close()
 			return
 		}
 	}()
+}
+
+func close() {
+	for _, r := range startedProxies {
+		r.Close()
+	}
 }

@@ -18,22 +18,24 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"github.com/nlnwa/veidemann-recorderproxy/recorderproxy"
 	"github.com/nlnwa/veidemann-recorderproxy/tracing"
 	"github.com/opentracing-contrib/go-stdlib/nethttp"
 	"github.com/opentracing/opentracing-go"
 	"github.com/opentracing/opentracing-go/ext"
 	otlog "github.com/opentracing/opentracing-go/log"
+	"github.com/sirupsen/logrus"
 	"io/ioutil"
-	"log"
 	"net/http"
 	"time"
 )
 
 func get(url string, client *http.Client, timeout time.Duration) (int, []byte, error) {
+	log := logrus.WithField("component", "CLIENT")
 	tracer, closer := tracing.Init("Internal test client")
-	defer closer.Close()
+	if tracer != nil {
+		defer closer.Close()
+	}
 	span := tracer.StartSpan("Client Request")
 	defer span.Finish()
 
@@ -50,9 +52,6 @@ func get(url string, client *http.Client, timeout time.Duration) (int, []byte, e
 	req = req.WithContext(opentracing.ContextWithSpan(req.Context(), span))
 
 	options := []nethttp.ClientOption{
-		nethttp.ClientSpanObserver(func(span opentracing.Span, r *http.Request) {
-			fmt.Println("HEY", span.Context(), r)
-		}),
 		nethttp.ClientTrace(true),
 		nethttp.InjectSpanContext(true),
 	}
@@ -62,8 +61,11 @@ func get(url string, client *http.Client, timeout time.Duration) (int, []byte, e
 	t := client.Transport
 	t = &nethttp.Transport{RoundTripper: t}
 	client.Transport = t
-	client.Transport, req = recorderproxy.DecorateRequest(client.Transport, req, nil)
+	if logrus.IsLevelEnabled(logrus.DebugLevel) {
+		client.Transport, req = recorderproxy.DecorateRequest(client.Transport, req)
+	}
 
+	log.Infof("submitting request: %v %v %v", req.Method, req.URL, req.Proto)
 	resp, err := client.Do(req)
 	if err != nil {
 		onError(span, err)
@@ -81,9 +83,10 @@ func get(url string, client *http.Client, timeout time.Duration) (int, []byte, e
 }
 
 func onError(span opentracing.Span, err error) (int, []byte, error) {
+	log := logrus.WithField("component", "CLIENT")
 	// handle errors by recording them in the span
 	span.SetTag(string(ext.Error), true)
 	span.LogKV(otlog.Error(err))
-	log.Print(err)
+	log.Error(err)
 	return 0, nil, err
 }

@@ -17,17 +17,16 @@
 package context
 
 import (
-	"fmt"
-	"github.com/getlantern/proxy/filters"
+	"context"
 	"net/url"
 	"reflect"
 	"testing"
 )
 
 func Test_recordProxyDataAware(t *testing.T) {
-	ctx1 := filters.BackgroundContext()
-	ctx2, data1 := recordProxyDataAware(ctx1)
-	ctx3, data2 := recordProxyDataAware(ctx2)
+	ctx1 := context.Background()
+	ctx2 := RecordProxyDataAware(ctx1)
+	ctx3 := RecordProxyDataAware(ctx2)
 
 	if ctx1.Value(ctxKeyRecorderProxyAware) != nil {
 		t.Error("Not expected to RecordProxyAware")
@@ -37,10 +36,6 @@ func Test_recordProxyDataAware(t *testing.T) {
 		t.Error("Expected to RecordProxyAware")
 	}
 
-	if data1 == nil {
-		t.Error("Expected to context to have data")
-	}
-
 	if !reflect.DeepEqual(ctx2, ctx3) {
 		t.Error("Expected to get same context")
 	}
@@ -48,24 +43,18 @@ func Test_recordProxyDataAware(t *testing.T) {
 	if !reflect.DeepEqual(ctx2.Value(ctxKeyRecorderProxyAware), ctx3.Value(ctxKeyRecorderProxyAware)) {
 		t.Error("Expected to get same data")
 	}
-
-	if !reflect.DeepEqual(data1, data2) {
-		t.Error("Expected to get same data")
-	}
-
-	if !reflect.DeepEqual(ctx2.Value(ctxKeyRecorderProxyAware), data1) {
-		t.Error("Expected to get same data")
-	}
 }
 
 func TestGetHost(t *testing.T) {
 	uri, _ := url.Parse("http://www.example.com")
-	ctx1 := filters.BackgroundContext()
-	ctx2 := SetUri(filters.BackgroundContext(), uri)
-	ctx3 := SetHostPort(filters.BackgroundContext(), "foo", "123")
+	ctx1 := context.Background()
+	ctx2 := RecordProxyDataAware(context.Background())
+	ctx3 := RecordProxyDataAware(context.Background())
+	SetUri(ctx2, uri)
+	SetHost(ctx3, "foo")
 	tests := []struct {
 		name string
-		ctx  filters.Context
+		ctx  context.Context
 		want string
 	}{
 		{"No RecorderProxy aware", ctx1, ""},
@@ -81,37 +70,16 @@ func TestGetHost(t *testing.T) {
 	}
 }
 
-func TestGetPort(t *testing.T) {
-	uri, _ := url.Parse("http://www.example.com")
-	ctx1 := filters.BackgroundContext()
-	ctx2 := SetUri(filters.BackgroundContext(), uri)
-	ctx3 := SetHostPort(filters.BackgroundContext(), "foo", "123")
-	tests := []struct {
-		name string
-		ctx  filters.Context
-		want string
-	}{
-		{"No RecorderProxy aware", ctx1, ""},
-		{"No value", ctx2, ""},
-		{"With value", ctx3, "123"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := GetPort(tt.ctx); got != tt.want {
-				t.Errorf("GetPort() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
 func TestGetUrl(t *testing.T) {
 	uri, _ := url.Parse("http://www.example.com")
-	ctx1 := filters.BackgroundContext()
-	ctx2 := SetHostPort(filters.BackgroundContext(), "foo", "123")
-	ctx3 := SetUri(filters.BackgroundContext(), uri)
+	ctx1 := context.Background()
+	ctx2 := RecordProxyDataAware(context.Background())
+	ctx3 := RecordProxyDataAware(context.Background())
+	SetHost(ctx2, "foo")
+	SetUri(ctx3, uri)
 	tests := []struct {
 		name string
-		ctx  filters.Context
+		ctx  context.Context
 		want *url.URL
 	}{
 		{"No RecorderProxy aware", ctx1, nil},
@@ -127,45 +95,16 @@ func TestGetUrl(t *testing.T) {
 	}
 }
 
-func TestResolveAndSetUrl(t *testing.T) {
-	uri1, _ := url.Parse("http://www.example.com")
-	uri2, _ := url.Parse("/mypath")
-	uri3, _ := url.Parse("http://www.example.com/mypath")
-	uri4, _ := url.Parse("http://www.example.com/otherpath")
-	fmt.Printf("%v\n%v\n%v\n%v\n", uri1, uri2, uri3, uri1.ResolveReference(uri2))
-	ctx1 := filters.BackgroundContext()
-	ctx2 := SetHostPort(filters.BackgroundContext(), "foo", "123")
-	ctx3 := SetUri(filters.BackgroundContext(), uri1)
-	ctx4 := SetUri(filters.BackgroundContext(), uri3)
-	tests := []struct {
-		name string
-		ctx  filters.Context
-		uri  *url.URL
-		want *url.URL
-	}{
-		{"No existing RecorderProxy aware", ctx1, uri1, uri1},
-		{"Resolve with no existing URI", ctx2, uri1, uri1},
-		{"Resolve with same URI", ctx3, uri1, uri1},
-		{"Resolve with relative URI", ctx3, uri2, uri3},
-		{"Resolve with absolute URI", ctx4, uri4, uri4},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if _, gotUri := ResolveAndSetUri(tt.ctx, tt.uri); !reflect.DeepEqual(gotUri, tt.want) {
-				t.Errorf("ResolveAndSetUri() = %v, want %v", gotUri, tt.want)
-			}
-		})
-	}
-}
-
 func TestGetRecordContext(t *testing.T) {
 	uri, _ := url.Parse("http://www.example.com")
-	ctx1 := filters.BackgroundContext()
-	ctx2 := SetUri(filters.BackgroundContext(), uri)
-	ctx3 := SetRecordContext(filters.BackgroundContext(), &RecordContext{})
+	ctx1 := context.Background()
+	ctx2 := RecordProxyDataAware(context.Background())
+	ctx3 := RecordProxyDataAware(context.Background())
+	SetUri(ctx2, uri)
+	SetRecordContext(ctx3, &RecordContext{})
 	tests := []struct {
 		name string
-		ctx  filters.Context
+		ctx  context.Context
 		want *RecordContext
 	}{
 		{"No RecorderProxy aware", ctx1, nil},
@@ -180,28 +119,3 @@ func TestGetRecordContext(t *testing.T) {
 		})
 	}
 }
-
-//func TestMe(t *testing.T) {
-//	ctx1 := context.Background()
-//	ctx2, _ := context.WithTimeout(ctx1, 2*time.Second)
-//	ctx3 := context.WithValue(ctx2, "foo", "bar")
-//
-//	go func() {
-//		select {
-//		case <-ctx2.Done():
-//			fmt.Printf("ctx2 about to cancel\n")
-//			time.Sleep(2 * time.Second)
-//			fmt.Printf("ctx2 cancelled\n")
-//		}
-//	}()
-//
-//	go func() {
-//		select {
-//		case <-ctx3.Done():
-//			fmt.Printf("ctx3 about to cancel\n")
-//			time.Sleep(2 * time.Second)
-//			fmt.Printf("ctx3 cancelled\n")
-//		}
-//	}()
-//	time.Sleep(8 * time.Second)
-//}

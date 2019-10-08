@@ -18,7 +18,6 @@ package recorderproxy
 
 import (
 	"errors"
-	"fmt"
 	"github.com/getlantern/proxy/filters"
 	"net/http"
 )
@@ -27,8 +26,9 @@ import (
 type NonproxyFilter struct{}
 
 func (f *NonproxyFilter) Apply(ctx filters.Context, req *http.Request, next filters.Next) (resp *http.Response, context filters.Context, err error) {
-	if req.Method != http.MethodConnect && !req.URL.IsAbs() && !ctx.IsMITMing() {
-		fmt.Printf("CONTEXT %v\n", ctx)
+	if req.Method == http.MethodConnect {
+		return next(ctx, req)
+	} else if !req.URL.IsAbs() && !ctx.IsMITMing() {
 		return filters.Fail(ctx, req, 500, errors.New("This is a proxy server. Does not respond to non-proxy requests."))
 	} else {
 		return next(ctx, req)

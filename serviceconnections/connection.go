@@ -61,7 +61,7 @@ func (c *Connections) Connect(contentWriterHost, contentWriterPort, dnsResolverH
 	c.browserControllerPort = browserControllerPort
 	browserControllerAddr := browserControllerHost + ":" + browserControllerPort
 
-	log.Printf("Proxy is using contentwriter at: %s, dns resolver at: %s and browser controller at: %s", contentWriterAddr, dnsResolverAddr, browserControllerAddr)
+	log.WithField("component", "PROXY").Printf("Proxy is using contentwriter at: %s, dns resolver at: %s and browser controller at: %s", contentWriterAddr, dnsResolverAddr, browserControllerAddr)
 
 	opts = append(opts,
 		grpc.WithInsecure(),
@@ -76,41 +76,41 @@ func (c *Connections) Connect(contentWriterHost, contentWriterPort, dnsResolverH
 	// Set up ContentWriterClient
 	clientConn, err := grpc.DialContext(dialCtx, contentWriterAddr, c.addStatsHandler("ContentWriter", opts)...)
 	if err != nil {
-		log.Errorf("fail to dial contentwriter at %v: %v", contentWriterAddr, err)
+		log.WithField("component", "gRPC:CWR").Errorf("fail to dial contentwriter at %v: %v", contentWriterAddr, err)
 		return err
 	}
 	c.contentWriterClientConn = clientConn
 	c.contentWriterClient = contentwriterV1.NewContentWriterClient(clientConn)
 
-	log.Printf("Connected to contentwriter")
+	log.WithField("component", "gRPC:CWR").Printf("Connected to contentwriter")
 
 	// Set up DnsResolverClient
 	clientConn, err = grpc.DialContext(dialCtx, dnsResolverAddr, c.addStatsHandler("DNSResolver", opts)...)
 	if err != nil {
-		log.Errorf("fail to dial dns resolver at %v: %v", dnsResolverAddr, err)
+		log.WithField("component", "gRPC:DNS").Errorf("fail to dial dns resolver at %v: %v", dnsResolverAddr, err)
 		return err
 	}
 	c.dnsResolverClientConn = clientConn
 	c.dnsResolverClient = dnsresolverV1.NewDnsResolverClient(clientConn)
 
-	log.Printf("Connected to dns resolver")
+	log.WithField("component", "gRPC:DNS").Printf("Connected to dns resolver")
 
 	// Set up BrowserControllerClient
 	clientConn, err = grpc.DialContext(dialCtx, browserControllerAddr, c.addStatsHandler("BrowserController", opts)...)
 	if err != nil {
-		log.Errorf("fail to dial browser controller at %v: %v", browserControllerAddr, err)
+		log.WithField("component", "gRPC:BCR").Errorf("fail to dial browser controller at %v: %v", browserControllerAddr, err)
 		return err
 	}
 	c.browserControllerClientConn = clientConn
 	c.browserControllerClient = browsercontrollerV1.NewBrowserControllerClient(clientConn)
 
-	log.Printf("Connected to browser controller")
+	log.WithField("component", "gRPC:CWR").Printf("Connected to browser controller")
 
 	return nil
 }
 
 func (c *Connections) addStatsHandler(serviceName string, opts []grpc.DialOption) []grpc.DialOption {
-	if c.StatsHandlerFactory != nil {
+	if c.StatsHandlerFactory != nil && log.IsLevelEnabled(log.DebugLevel) {
 		return append(opts, grpc.WithStatsHandler(c.StatsHandlerFactory(serviceName)))
 	}
 	return opts

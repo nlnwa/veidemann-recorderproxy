@@ -17,9 +17,7 @@
 package logger
 
 import (
-	"flag"
 	"fmt"
-	"github.com/nlnwa/veidemann-recorderproxy/errors"
 	log "github.com/sirupsen/logrus"
 	stdLog "log"
 	"strings"
@@ -37,15 +35,13 @@ func StandardLogger() *Logger {
 	return Log
 }
 
-func InitLog(level, formatter string, logMethod bool) {
+func InitLog(level, formatter string, logMethod bool) error {
 	stdLog.SetOutput(log.StandardLogger().Writer())
 
 	// Configure the log level, defaults to "INFO"
 	logLevel, err := log.ParseLevel(level)
 	if err != nil {
-		fmt.Println(errors.Wrapf(err, errors.LoggingError, "failed to parse log level: %q", level))
-		flag.Usage()
-		return
+		return fmt.Errorf("failed to parse log level: %q", level)
 	}
 	log.SetLevel(logLevel)
 
@@ -61,14 +57,13 @@ func InitLog(level, formatter string, logMethod bool) {
 	case FORMATTER_JSON:
 		log.SetFormatter(&log.JSONFormatter{})
 	default:
-		fmt.Println(errors.Errorf(errors.LoggingError, "unknown formatter type: %q", formatter))
-		flag.Usage()
-		return
+		return fmt.Errorf("unknown formatter type: %q", formatter)
 	}
 
 	if logMethod {
 		log.SetReportCaller(true)
 	}
+	return nil
 }
 
 type Logger struct {
@@ -88,6 +83,33 @@ func (l *Logger) WithError(err error) *Logger {
 
 func (l *Logger) WithComponent(comp string) *Logger {
 	return l.WithField("component", comp)
+}
+
+func (l *Logger) Trace(args ...interface{}) {
+	switch v := l.FieldLogger.(type) {
+	case *log.Logger:
+		v.Trace(args...)
+	case *log.Entry:
+		v.Trace(args...)
+	}
+}
+
+func (l *Logger) Traceln(args ...interface{}) {
+	switch v := l.FieldLogger.(type) {
+	case *log.Logger:
+		v.Traceln(args...)
+	case *log.Entry:
+		v.Traceln(args...)
+	}
+}
+
+func (l *Logger) Tracef(format string, args ...interface{}) {
+	switch v := l.FieldLogger.(type) {
+	case *log.Logger:
+		v.Tracef(format, args...)
+	case *log.Entry:
+		v.Tracef(format, args...)
+	}
 }
 
 func LogWithComponent(comp string) *Logger {

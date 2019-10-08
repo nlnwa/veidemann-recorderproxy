@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package main
+package testutil
 
 import (
 	"context"
@@ -28,6 +28,7 @@ import (
 	contentwriterV1 "github.com/nlnwa/veidemann-api-go/contentwriter/v1"
 	dnsresolverV1 "github.com/nlnwa/veidemann-api-go/dnsresolver/v1"
 	"github.com/nlnwa/veidemann-recorderproxy/logger"
+	"github.com/nlnwa/veidemann-recorderproxy/serviceconnections"
 	"github.com/nlnwa/veidemann-recorderproxy/tracing"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -50,27 +51,34 @@ const bufSize = 1024 * 1024
  * Server mocks
  */
 type GrpcServiceMock struct {
-	lis *bufconn.Listener
-	l   *sync.Mutex
-	//requests *requests
-	doneBC        chan bool
-	doneCW        chan bool
+	lis           *bufconn.Listener
+	l             *sync.Mutex
+	Requests      *Requests
+	DoneBC        chan bool
+	DoneCW        chan bool
 	contextDialer grpc.DialOption
+	Server        *grpc.Server
+	ClientConn    *serviceconnections.Connections
+}
+
+type Requests struct {
+	BrowserControllerRequests []*browsercontrollerV1.DoRequest
+	DnsResolverRequests       []*dnsresolverV1.ResolveRequest
+	ContentWriterRequests     []*contentwriterV1.WriteRequest
 }
 
 func NewGrpcServiceMock() *GrpcServiceMock {
 	tracer, _ := tracing.Init("Service Mocks")
-	//tracer, closer := tracing.Init("Service Mocks")
-	//defer closer.Close()
 
 	m := &GrpcServiceMock{
-		lis: bufconn.Listen(bufSize),
-		l:   &sync.Mutex{},
+		lis:      bufconn.Listen(bufSize),
+		l:        &sync.Mutex{},
+		Requests: &Requests{},
 	}
 
 	m.contextDialer = grpc.WithContextDialer(m.bufDialer)
 
-	s := grpc.NewServer(
+	m.Server = grpc.NewServer(
 		grpc.StreamInterceptor(grpc_middleware.ChainStreamServer(
 			grpc_ctxtags.StreamServerInterceptor(grpc_ctxtags.WithFieldExtractor(grpc_ctxtags.CodeGenRequestFieldExtractor)),
 			grpc_opentracing.StreamServerInterceptor(grpc_opentracing.WithTracer(tracer)),
@@ -81,16 +89,34 @@ func NewGrpcServiceMock() *GrpcServiceMock {
 		)),
 	)
 
-	dnsresolverV1.RegisterDnsResolverServer(s, m)
-	contentwriterV1.RegisterContentWriterServer(s, m)
-	browsercontrollerV1.RegisterBrowserControllerServer(s, m)
+	dnsresolverV1.RegisterDnsResolverServer(m.Server, m)
+	contentwriterV1.RegisterContentWriterServer(m.Server, m)
+	browsercontrollerV1.RegisterBrowserControllerServer(m.Server, m)
 	go func() {
-		if err := s.Serve(m.lis); err != nil {
+		if err := m.Server.Serve(m.lis); err != nil {
 			log.Fatalf("Server exited with error: %v", err)
 		}
 	}()
 
+	m.ClientConn = serviceconnections.NewConnections()
+	m.ClientConn.StatsHandlerFactory = tracing.NewStatsHandler
+
+	err := m.ClientConn.Connect("", "", "", "", "", "", 1*time.Minute, grpc.WithContextDialer(m.bufDialer))
+	if err != nil {
+		log.Panicf("Could not connect to services: %v", err)
+	}
+
 	return m
+}
+
+func (s *GrpcServiceMock) Close() {
+	s.ClientConn.Close()
+	s.Server.GracefulStop()
+	s.lis.Close()
+}
+
+func (s *GrpcServiceMock) Clear() {
+	s.Requests = &Requests{}
 }
 
 func (s *GrpcServiceMock) bufDialer(context.Context, string) (net.Conn, error) {
@@ -102,7 +128,7 @@ func (s *GrpcServiceMock) addBcRequest(r *browsercontrollerV1.DoRequest) {
 
 	logger.LogWithComponent("MOCK:BrowserController").Print(r)
 
-	//s.requests.BrowserControllerRequests = append(s.requests.BrowserControllerRequests, r)
+	s.Requests.BrowserControllerRequests = append(s.Requests.BrowserControllerRequests, r)
 	s.l.Unlock()
 }
 
@@ -111,7 +137,7 @@ func (s *GrpcServiceMock) addDnsRequest(r *dnsresolverV1.ResolveRequest) {
 
 	logger.LogWithComponent("MOCK:DNSResolver").Print(r)
 
-	//s.requests.DnsResolverRequests = append(s.requests.DnsResolverRequests, r)
+	s.Requests.DnsResolverRequests = append(s.Requests.DnsResolverRequests, r)
 	s.l.Unlock()
 }
 
@@ -128,19 +154,18 @@ func (s *GrpcServiceMock) addCwRequest(r *contentwriterV1.WriteRequest) {
 		logger.LogWithComponent("MOCK:ContentWriter").Print(r)
 	}
 
-	//s.requests.ContentWriterRequests = append(s.requests.ContentWriterRequests, r)
+	s.Requests.ContentWriterRequests = append(s.Requests.ContentWriterRequests, r)
 	s.l.Unlock()
 }
 
 func (s *GrpcServiceMock) clear() {
-	//s.requests = &requests{}
+	s.Requests = &Requests{}
 }
 
 //Implements DNS service
 func (s *GrpcServiceMock) Resolve(ctx context.Context, in *dnsresolverV1.ResolveRequest) (*dnsresolverV1.ResolveReply, error) {
 	s.addDnsRequest(in)
 
-	fmt.Printf("Looking up %v\n", in.Host)
 	ips, err := net.LookupIP(in.Host)
 	if err == nil {
 		for _, ip := range ips {
@@ -161,7 +186,6 @@ func (s *GrpcServiceMock) Resolve(ctx context.Context, in *dnsresolverV1.Resolve
 
 // Implements ContentWriterService
 func (s *GrpcServiceMock) Write(server contentwriterV1.ContentWriter_WriteServer) error {
-	s.doneCW = make(chan bool, 200)
 	records := map[int32]*contentwriterV1.WriteResponseMeta_RecordMeta{}
 	data := make(map[int32][]byte)
 	size := make(map[int32]int64)
@@ -169,11 +193,6 @@ func (s *GrpcServiceMock) Write(server contentwriterV1.ContentWriter_WriteServer
 	gotMeta := false
 	gotCancel := false
 	blockDigest := make(map[int32]hash.Hash)
-
-	go func() {
-		<-server.Context().Done()
-		s.doneCW <- true
-	}()
 
 	for {
 		request, err := server.Recv()
@@ -190,6 +209,15 @@ func (s *GrpcServiceMock) Write(server contentwriterV1.ContentWriter_WriteServer
 		if err != nil {
 			fmt.Printf("Unknown Error in ContentWriter communication %v\n", err)
 			return err
+		}
+
+		if s.DoneCW == nil {
+			s.DoneCW = make(chan bool, 200)
+			go func() {
+				<-server.Context().Done()
+				s.DoneCW <- true
+				s.DoneCW = nil
+			}()
 		}
 
 		s.addCwRequest(request)
@@ -267,15 +295,19 @@ func (s *GrpcServiceMock) Do(server browsercontrollerV1.BrowserController_DoServ
 			return err
 		}
 
+		if s.DoneBC == nil {
+			s.DoneBC = make(chan bool, 200)
+			go func() {
+				<-server.Context().Done()
+				s.DoneBC <- true
+				s.DoneBC = nil
+			}()
+		}
+
 		s.addBcRequest(request)
 
 		switch v := request.Action.(type) {
 		case *browsercontrollerV1.DoRequest_New:
-			s.doneBC = make(chan bool, 200)
-			go func() {
-				<-server.Context().Done()
-				s.doneBC <- true
-			}()
 
 			if strings.HasSuffix(v.New.Uri, "blocked") {
 				_ = server.Send(&browsercontrollerV1.DoReply{

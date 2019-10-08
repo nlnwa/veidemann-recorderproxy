@@ -17,29 +17,39 @@
 package tracing
 
 import (
-	"fmt"
 	"github.com/opentracing/opentracing-go"
 	"github.com/uber/jaeger-client-go/config"
 	"github.com/uber/jaeger-client-go/log"
 	"io"
 )
 
-// initJaeger returns an instance of Jaeger Tracer that samples 100% of traces and logs all spans to stdout.
+// Init returns an instance of Jaeger Tracer that samples 100% of traces and logs all spans to stdout.
 func Init(service string) (opentracing.Tracer, io.Closer) {
-	cfg := &config.Configuration{
-		ServiceName: service,
-		Sampler: &config.SamplerConfig{
-			Type:  "const",
-			Param: 1,
-		},
-		Reporter: &config.ReporterConfig{
-			LogSpans:           false,
-			LocalAgentHostPort: "localhost:6831",
-		},
+	cfg, err := config.FromEnv()
+	if err != nil {
+		log.StdLogger.Infof("ERROR: cannot init Jaeger from environment: %v", err)
+		return nil, nil
 	}
+	if cfg.ServiceName == "" {
+		cfg.ServiceName = service
+	}
+
+	//cfg := &config.Configuration{
+	//	ServiceName: service,
+	//	Sampler: &config.SamplerConfig{
+	//		Type:  "const",
+	//		Param: 1,
+	//	},
+	//	Reporter: &config.ReporterConfig{
+	//		LogSpans:           false,
+	//		LocalAgentHostPort: "localhost:6831",
+	//	},
+	//}
+
 	tracer, closer, err := cfg.NewTracer(config.Logger(log.StdLogger))
 	if err != nil {
-		panic(fmt.Sprintf("ERROR: cannot init Jaeger: %v\n", err))
+		log.StdLogger.Infof("ERROR: cannot init Jaeger: %v", err)
+		return nil, nil
 	}
 	return tracer, closer
 }
