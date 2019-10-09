@@ -254,7 +254,7 @@ func TestRecorderProxy(t *testing.T) {
 			url:                   s.SrvHttp.URL + "/cached",
 			wantStatus:            200,
 			wantContent:           "content from http server",
-			wantResponseBlockSize: 150,
+			wantResponseBlockSize: 217,
 			wantErr:               false,
 		},
 		{
@@ -262,7 +262,7 @@ func TestRecorderProxy(t *testing.T) {
 			url:                   s.SrvHttps.URL + "/cached",
 			wantStatus:            200,
 			wantContent:           "content from https server",
-			wantResponseBlockSize: 150,
+			wantResponseBlockSize: 217,
 			wantErr:               false,
 		},
 		{
@@ -514,7 +514,7 @@ func TestRecorderProxyThroughProxy(t *testing.T) {
 			url:                   s.SrvHttp.URL + "/cached",
 			wantStatus:            200,
 			wantContent:           "content from http server",
-			wantResponseBlockSize: 150,
+			wantResponseBlockSize: 217,
 			wantErr:               false,
 		},
 		{
@@ -522,7 +522,7 @@ func TestRecorderProxyThroughProxy(t *testing.T) {
 			url:                   s.SrvHttps.URL + "/cached",
 			wantStatus:            200,
 			wantContent:           "content from https server",
-			wantResponseBlockSize: 150,
+			wantResponseBlockSize: 217,
 			wantErr:               false,
 		},
 		{

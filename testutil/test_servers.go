@@ -90,8 +90,9 @@ func (h ConstantSlowHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 type ConstantCacheHandler string
 
 func (h ConstantCacheHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("X-Cache", "HIT")
-	w.Header().Set("X-Cache-Lookup", "HIT")
+	w.Header().Set("X-Cache", "HIT from veidemann_cache:1234")
+	w.Header().Add("X-Cache", "MISS")
+	w.Header().Set("X-Cache-Lookup", "HIT from veidemann_cache:1234")
 	_, _ = io.WriteString(w, string(h))
 }
 

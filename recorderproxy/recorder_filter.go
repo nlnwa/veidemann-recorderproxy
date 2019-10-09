@@ -167,7 +167,7 @@ func isFromCache(resp *http.Response) bool {
 	}
 
 	for _, v := range cacheHeaders {
-		if strings.Contains(v, "veidemann_cache") && strings.Contains(v, "HIT") {
+		if strings.Contains(v, "HIT from veidemann_cache") {
 			return true
 		}
 	}
