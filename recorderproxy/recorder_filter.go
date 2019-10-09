@@ -134,7 +134,7 @@ func (f *RecorderFilter) filterResponse(c filters.Context, span opentracing.Span
 		return resp, nil
 	}
 
-	if strings.Contains(resp.Header.Get("X-Cache"), "HIT") {
+	if isFromCache(resp) {
 		span.LogKV("event", "Loaded from cache")
 		context2.LogWithRecordContext(rc, "FLT:rec").Info("Loaded from cache")
 		rc.FoundInCache = true
@@ -158,4 +158,19 @@ func (f *RecorderFilter) filterResponse(c filters.Context, span opentracing.Span
 	resp.Body = bodyWrapper
 
 	return resp, nil
+}
+
+func isFromCache(resp *http.Response) bool {
+	cacheHeaders := resp.Header["X-Cache"]
+	if cacheHeaders == nil {
+		return false
+	}
+
+	for _, v := range cacheHeaders {
+		if strings.Contains(v, "veidemann_cache") && strings.Contains(v, "HIT") {
+			return true
+		}
+	}
+
+	return false
 }
