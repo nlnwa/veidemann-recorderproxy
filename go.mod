@@ -27,4 +27,4 @@ require (
 	google.golang.org/grpc v1.23.1
 )
 
-replace github.com/getlantern/proxy => github.com/nlnwa/getlantern-proxy v0.0.0-20191007153124-hooks
+replace github.com/getlantern/proxy => github.com/nlnwa/getlantern-proxy v0.0.0-20191010083338-hooks

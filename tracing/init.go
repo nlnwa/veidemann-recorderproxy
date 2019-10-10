@@ -34,18 +34,6 @@ func Init(service string) (opentracing.Tracer, io.Closer) {
 		cfg.ServiceName = service
 	}
 
-	//cfg := &config.Configuration{
-	//	ServiceName: service,
-	//	Sampler: &config.SamplerConfig{
-	//		Type:  "const",
-	//		Param: 1,
-	//	},
-	//	Reporter: &config.ReporterConfig{
-	//		LogSpans:           false,
-	//		LocalAgentHostPort: "localhost:6831",
-	//	},
-	//}
-
 	tracer, closer, err := cfg.NewTracer(config.Logger(log.StdLogger))
 	if err != nil {
 		log.StdLogger.Infof("ERROR: cannot init Jaeger: %v", err)

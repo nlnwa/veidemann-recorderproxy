@@ -72,7 +72,6 @@ func (rc *RecordContext) getBccSession() (*BccSession, error) {
 	bccCtx = opentracing.ContextWithSpan(bccCtx, span)
 
 	bcc, err := rc.conn.BrowserControllerClient().Do(bccCtx)
-	span.LogFields(otLog.String("event", "Started BrowserControllerClient session"), otLog.Error(err))
 	if err != nil {
 		l.WithError(err).Warn("Error connecting to browser controller")
 		span.LogFields(otLog.String("event", "Failed starting BrowserControllerClient session"), otLog.Error(err))

@@ -53,6 +53,9 @@ func main() {
 	flag.Parse()
 	viper.BindPFlags(flag.CommandLine)
 
+	os.Setenv("JAEGER_SAMPLER_TYPE", "const")
+	os.Setenv("JAEGER_SAMPLER_PARAM", "1")
+
 	err := logger.InitLog(viper.GetString("log-level"), viper.GetString("log-formatter"), viper.GetBool("log-method"))
 	if err != nil {
 		logger.LogWithComponent("INIT").Errorf("Could not init logger: %s", err)

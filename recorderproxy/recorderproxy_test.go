@@ -34,15 +34,12 @@ import (
 	"github.com/nlnwa/veidemann-recorderproxy/serviceconnections"
 	"github.com/nlnwa/veidemann-recorderproxy/testutil"
 	"io/ioutil"
-	"log"
-	"net"
 	"net/http"
 	"net/url"
 	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -67,7 +64,7 @@ type test struct {
 }
 
 func init() {
-	logger.InitLog("debug", "text", false)
+	logger.InitLog("info", "text", false)
 }
 
 func TestRecorderProxy(t *testing.T) {
@@ -1454,54 +1451,6 @@ func requestsEqual(got, want interface{}) bool {
 
 func printRequest(req interface{}) string {
 	return fmt.Sprintf("%30T: %v\n", req, req)
-}
-
-type testConn struct {
-	net.Conn
-	t         string
-	closed    *int32
-	readCount int
-}
-
-func (conn *testConn) OnRequest(req *http.Request) {
-	fmt.Printf("SP ON REQUEST: %v\n", req)
-}
-
-func (conn *testConn) Read(b []byte) (n int, err error) {
-	conn.readCount++
-	n, err = conn.Conn.Read(b)
-	fmt.Printf("\n\x1b[31mSP ON READ: %v, Err: %v\x1b[0m\n\x1b[31m-------------------------\x1b[0m\n%s\n\x1b[31m-------------------------\x1b[0m\n", n, err, b[:n])
-	if conn.readCount == 2 {
-		conn.Write([]byte("HTTP/"))
-	}
-	return
-}
-
-func (conn *testConn) Write(b []byte) (n int, err error) {
-	n, err = conn.Conn.Write(b)
-	fmt.Printf("\n\x1b[31mSP ON WRITE: %v, Err: %v\x1b[0m\n\x1b[31m-------------------------\x1b[0m\n%s\n\x1b[31m-------------------------\x1b[0m\n", n, err, b[:n])
-	return
-}
-
-func (conn *testConn) Close() (err error) {
-	if atomic.CompareAndSwapInt32(conn.closed, 0, 1) {
-		log.Printf("SP Close %s Conn %v -> %v %T\n", conn.t, conn.RemoteAddr(), conn.LocalAddr(), conn.Conn)
-	}
-	return conn.Conn.Close()
-}
-
-func WrapConn(conn net.Conn, label string) *testConn {
-	i := int32(0)
-	var color string
-	switch label {
-	case "downstream":
-		color = fmt.Sprintf("\x1b[31m")
-	default:
-		color = fmt.Sprintf("\x1b[31m")
-	}
-	reset := "\x1b[0m"
-	fmt.Printf("\n%sSP new %s connection%s\n", color, label, reset)
-	return &testConn{Conn: conn, t: label, closed: &i}
 }
 
 // localRecorderProxy creates a new recorderproxy which uses internal transport

@@ -19,7 +19,6 @@ package recorderproxy
 import (
 	"context"
 	"crypto/tls"
-	"fmt"
 	"github.com/getlantern/mitm"
 	"github.com/getlantern/proxy"
 	"github.com/getlantern/proxy/filters"
@@ -27,6 +26,9 @@ import (
 	"github.com/nlnwa/veidemann-recorderproxy/errors"
 	"github.com/nlnwa/veidemann-recorderproxy/logger"
 	"github.com/nlnwa/veidemann-recorderproxy/serviceconnections"
+	"github.com/opentracing/opentracing-go"
+	"github.com/opentracing/opentracing-go/ext"
+	"io"
 	"strconv"
 	"sync/atomic"
 
@@ -43,10 +45,9 @@ const (
 var acceptAllCerts = &tls.Config{InsecureSkipVerify: true}
 
 type RecorderProxy struct {
+	proxy.Proxy
 	id                int32
 	Addr              string
-	proxyImpl         proxy.Proxy
-	proxyOpts         *proxy.Opts
 	conn              *serviceconnections.Connections
 	ConnectionTimeout time.Duration
 	nextProxy         string
@@ -79,7 +80,7 @@ func NewRecorderProxy(id int, addr string, port int, conn *serviceconnections.Co
 		filterChain = filterChain.Append(chainedProxyFilter)
 	}
 
-	r.proxyOpts = &proxy.Opts{
+	proxyOpts := &proxy.Opts{
 		Dial: r.Dial,
 		//IdleTimeout: 3 * time.Second,
 		Filter: filterChain,
@@ -94,28 +95,36 @@ func NewRecorderProxy(id int, addr string, port int, conn *serviceconnections.Co
 			CertFile:        "/tmp/rpcert.pem",
 		},
 		OnError: func(ctx filters.Context, req *http.Request, read bool, err error) *http.Response {
-			fmt.Printf("ON ERROR: %v\n", err)
-			//return nil
+			log.WithError(err).Error("Probably bug. Error handled by OnError should have been handled elsewhere.")
 			res, _, _ := filters.Fail(ctx, req, 500, err)
 			return res
 		},
 		OKWaitsForUpstream:  false,
 		OKSendsServerTiming: false,
-		NotifyDownstreamWritten: func(ctx filters.Context, downstream net.Conn, req *http.Request, err error) {
+		WriteResponseInterceptor: func(ctx filters.Context, downstream io.Writer, req *http.Request, resp *http.Response, invoker proxy.WriteResponseInvoker) error {
+			roundTripSpan, _ := opentracing.StartSpanFromContext(ctx, "Write downstream")
+			ext.HTTPUrl.Set(roundTripSpan, req.URL.String())
+			ext.HTTPMethod.Set(roundTripSpan, req.Method)
+			ext.HTTPStatusCode.Set(roundTripSpan, uint16(resp.StatusCode))
+			ext.SpanKind.Set(roundTripSpan, ext.SpanKindRPCServerEnum)
+			err := invoker(ctx, downstream, req, resp)
+			roundTripSpan.Finish()
+
 			rc := context2.GetRecordContext(ctx)
 			if rc != nil {
 				rc.ResponseCompleted(err)
 			}
+			return err
 		},
 	}
 
-	r.proxyOpts.InitMITM = func() (interceptor proxy.MITMInterceptor, e error) {
-		i, e := mitm.Configure(r.proxyOpts.MITMOpts)
+	proxyOpts.InitMITM = func() (interceptor proxy.MITMInterceptor, e error) {
+		i, e := mitm.Configure(proxyOpts.MITMOpts)
 		return &errorForwardingMITMInterceptor{i}, e
 	}
 
 	var err error
-	r.proxyImpl, err = proxy.New(r.proxyOpts)
+	r.Proxy, err = proxy.New(proxyOpts)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -168,7 +177,7 @@ func (proxy *RecorderProxy) Start() {
 
 			conn.CancelFunc = cancel
 			go func() {
-				err := proxy.proxyImpl.Handle(c, conn, conn)
+				err := proxy.Handle(c, conn, conn)
 				if err != nil && errors.Code(err) == errors.RuntimeException {
 					l.Errorf("Error handling request: %v", err)
 				}

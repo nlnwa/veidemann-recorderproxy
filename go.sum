@@ -107,8 +107,8 @@ github.com/mitchellh/go-server-timing v1.0.0 h1:cdHk4f7lxjwbRqTSGZFw8PCeoNYXGp4T
 github.com/mitchellh/go-server-timing v1.0.0/go.mod h1:RdipKQzCJaL4HyxFQBINbf4XoDdZKkSshqw9Bbsx1ic=
 github.com/mitchellh/mapstructure v1.1.2 h1:fmNYVwqnSfB9mZU6OS2O6GsXM+wcskZDuKQzvN1EDeE=
 github.com/mitchellh/mapstructure v1.1.2/go.mod h1:FVVH3fgwuzCH5S8UJGiWEs2h04kUh9fWfEaFds41c1Y=
-github.com/nlnwa/getlantern-proxy v0.0.0-20191007153124-hooks h1:LyvSNzqR2DUiqBLLbHOmZPwNKylMIonxHQgQtbRvk7o=
-github.com/nlnwa/getlantern-proxy v0.0.0-20191007153124-hooks/go.mod h1:NHlU9Z5Oni44QEkUinWmUPNa9hDvrxzd31cMSZPYq2Y=
+github.com/nlnwa/getlantern-proxy v0.0.0-20191010083338-hooks h1:IPbBvGRfalycQVXCw4aZwfyrj6c9BNEsrARfW1TJP88=
+github.com/nlnwa/getlantern-proxy v0.0.0-20191010083338-hooks/go.mod h1:+6JYU3ZnFg8rw9rjInY4TBKeFjbIsat0J+DGPTcPdaQ=
 github.com/nlnwa/veidemann-api-go v1.0.0-beta10 h1:WDqkeHOG+rjUixLxLIqNPeVTgoYM1bng2LPdUetIRpg=
 github.com/nlnwa/veidemann-api-go v1.0.0-beta10/go.mod h1:YSqujx23hZDAKNTXweMtHX6rnH1Q3WDkpSVw5NgQd3c=
 github.com/opentracing-contrib/go-stdlib v0.0.0-20190519235532-cf7a6c988dc9 h1:QsgXACQhd9QJhEmRumbsMQQvBtmdS0mafoVEBplWXEg=
@@ -124,8 +124,6 @@ github.com/pkg/errors v0.8.1/go.mod h1:bwawxfHBFNV+L2hUp1rHADufV3IMtnDRdf1r5NINE
 github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
 github.com/rogpeppe/fastuuid v0.0.0-20150106093220-6724a57986af/go.mod h1:XWv6SoW27p1b0cqNHllgS5HIMJraePCO15w5zCzIWYg=
-github.com/siddontang/go v0.0.0-20180604090527-bdc77568d726 h1:xT+JlYxNGqyT+XcU8iUrN18JYed2TvG9yN5ULG2jATM=
-github.com/siddontang/go v0.0.0-20180604090527-bdc77568d726/go.mod h1:3yhqj7WBBfRhbBlzyOC3gUxftwsU0u8gqevxwIHQpMw=
 github.com/sirupsen/logrus v1.4.2 h1:SPIRibHv4MatM3XXNO2BJeFLZwZ2LvZgfQ5+UNI2im4=
 github.com/sirupsen/logrus v1.4.2/go.mod h1:tLMulIdttU9McNUspp0xgXVQah82FyeX6MwdIuYE2rE=
 github.com/spf13/afero v1.1.2 h1:m8/z1t7/fwjysjQRYbP0RD+bUIF/8tJwPdEZsI83ACI=
