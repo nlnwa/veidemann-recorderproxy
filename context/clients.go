@@ -213,10 +213,12 @@ func (rc *RecordContext) getBccSession() (*BccSession, error) {
 
 type CwcSession struct {
 	contentwriter.ContentWriter_WriteClient
-	span     opentracing.Span
-	done     bool
-	canceled bool
-	m        sync.Mutex
+	span      opentracing.Span
+	done      bool
+	canceled  bool
+	m         sync.Mutex
+	cwcCtx    context.Context
+	ctxCancel context.CancelFunc
 }
 
 func (rc *RecordContext) getCwcSession() (*CwcSession, error) {
@@ -244,7 +246,7 @@ func (rc *RecordContext) getCwcSession() (*CwcSession, error) {
 		return nil, err
 	}
 
-	c := &CwcSession{ContentWriter_WriteClient: cwc, span: span}
+	c := &CwcSession{ContentWriter_WriteClient: cwc, span: span, cwcCtx: cwcCtx, ctxCancel: cancel}
 
 	go func() {
 		select {
@@ -286,6 +288,11 @@ func (rc *RecordContext) ResponseCompleted(writeErr error) {
 }
 
 func (rc *RecordContext) WaitForCompleted() {
+	if rc.cwc != nil {
+		select {
+		case <-rc.cwc.cwcCtx.Done():
+		}
+	}
 	if rc.bcc != nil {
 		select {
 		case <-rc.bcc.bccCtx.Done():
@@ -549,6 +556,7 @@ func (rc *RecordContext) CancelContentWriter(msg string) error {
 	defer cwc.m.Unlock()
 	if !cwc.done {
 		cwc.done = true
+		defer cwc.ctxCancel()
 
 		err = cwc.Send(&contentwriter.WriteRequest{Value: &contentwriter.WriteRequest_Cancel{Cancel: msg}})
 		if err != nil {
@@ -653,6 +661,8 @@ func (rc *RecordContext) SendMeta() (reply *contentwriter.WriteReply, err error)
 	defer cwc.m.Unlock()
 	if !cwc.done {
 		cwc.done = true
+		defer cwc.ctxCancel()
+
 		sendMetaSpan := opentracing.StartSpan("ContentWriter sendMeta", opentracing.ChildOf(cwc.span.Context()))
 		defer sendMetaSpan.Finish()
 		ext.HTTPUrl.Set(sendMetaSpan, rc.Meta.Meta.TargetUri)
