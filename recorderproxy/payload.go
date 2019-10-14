@@ -61,6 +61,8 @@ func writeResponseProlog(r *http.Response, w io.Writer) error {
 // the Request.
 var errMissingHost = errors.New("http: Request.Write on Request with no Host or URL set")
 
+// writeRequestProlog writes r to w in the HTTP/1.x server request format,
+// including the request line and headers.
 func writeRequestProlog(r *http.Request, w io.Writer) (err error) {
 	// Find the target host. Prefer the Host: header, but if that
 	// is not given, use the host from the request URL.

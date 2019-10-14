@@ -14,8 +14,22 @@
  * limitations under the License.
  */
 
-package recorderproxy
+package constants
 
-type Logger interface {
-	Printf(format string, v ...interface{})
-}
+// Http headers
+const (
+	HeaderAcceptEncoding   = "Accept-Encoding"
+	HeaderCrawlExecutionId = "veidemann_eid"
+	HeaderJobExecutionId   = "veidemann_jeid"
+	HeaderCollectionId     = "veidemann_cid"
+	HeaderProxyErrorCode   = "X-Recoderproxy-Err-Code"
+	HeaderProxyError       = "X-Recoderproxy-Err"
+)
+
+// Record constants
+const (
+	RecordRequest             = "request"
+	RecordResponse            = "response"
+	RecordContentTypeRequest  = "application/http; msgtype=request"
+	RecordContentTypeResponse = "application/http; msgtype=response"
+)
