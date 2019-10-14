@@ -21,6 +21,7 @@ import (
 	"github.com/getlantern/proxy/filters"
 	"github.com/nlnwa/veidemann-recorderproxy/logger"
 	"net/url"
+	"sync"
 )
 
 type ctxKey string
@@ -33,6 +34,8 @@ const (
 	ctxKeyConnectErr         = ctxKey("connectErr")
 )
 
+var dataAwareMutex sync.RWMutex
+
 func getRecordProxyDataAware(ctx context.Context) map[ctxKey]interface{} {
 	var rpData map[ctxKey]interface{}
 	a := ctx.Value(ctxKeyRecorderProxyAware)
@@ -44,41 +47,34 @@ func getRecordProxyDataAware(ctx context.Context) map[ctxKey]interface{} {
 }
 
 func RecordProxyDataAware(ctx context.Context) context.Context {
-	var rpData map[ctxKey]interface{}
 	a := ctx.Value(ctxKeyRecorderProxyAware)
-	if a != nil {
-		rpData = a.(map[ctxKey]interface{})
-	} else {
-		rpData = make(map[ctxKey]interface{}, 4)
+	if a == nil {
+		rpData := make(map[ctxKey]interface{}, 4)
 		ctx = context.WithValue(ctx, ctxKeyRecorderProxyAware, rpData)
 	}
 	return ctx
 }
 
 func SetHost(ctx context.Context, host string) {
-	a := getRecordProxyDataAware(ctx)
-	a[ctxKeyHost] = host
+	setValue(ctx, ctxKeyHost, host)
 }
 
 func SetUri(ctx context.Context, uri *url.URL) {
-	a := getRecordProxyDataAware(ctx)
-	a[ctxKeyUrl] = uri
+	setValue(ctx, ctxKeyUrl, uri)
 }
 
 func SetRecordContext(ctx context.Context, rc *RecordContext) {
-	a := getRecordProxyDataAware(ctx)
-	a[ctxKeyRCTX] = rc
-
-	// Start listener for cancellation
-	//go rc.cleanup(c)
+	setValue(ctx, ctxKeyRCTX, rc)
 }
 
 func SetConnectError(ctx context.Context, err error) {
-	a := getRecordProxyDataAware(ctx)
-	a[ctxKeyConnectErr] = err
+	setValue(ctx, ctxKeyConnectErr, err)
 }
 
 func SetConnectErrorIfNotExists(ctx context.Context, err error) {
+	dataAwareMutex.Lock()
+	defer dataAwareMutex.Unlock()
+
 	a := getRecordProxyDataAware(ctx)
 	if a[ctxKeyConnectErr] == nil {
 		a[ctxKeyConnectErr] = err
@@ -110,8 +106,20 @@ func getValue(ctx context.Context, key ctxKey) interface{} {
 	if a == nil {
 		return nil
 	}
+
+	dataAwareMutex.RLock()
+	defer dataAwareMutex.RUnlock()
+
 	rpData := a.(map[ctxKey]interface{})
 	return rpData[key]
+}
+
+func setValue(ctx context.Context, key ctxKey, value interface{}) {
+	dataAwareMutex.Lock()
+	defer dataAwareMutex.Unlock()
+
+	a := getRecordProxyDataAware(ctx)
+	a[key] = value
 }
 
 func WrapIfNecessary(ctx context.Context) filters.Context {
