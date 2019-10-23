@@ -153,6 +153,7 @@ func (f *RecorderFilter) filterResponse(c filters.Context, span opentracing.Span
 	}
 
 	if rc.ReplacementScript != nil {
+		context2.LogWithRecordContext(rc, "FLT:rec").Info("Replacement script")
 		resp.ContentLength = int64(len(rc.ReplacementScript.Script))
 	}
 	resp.Body = bodyWrapper

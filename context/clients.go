@@ -32,6 +32,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"io"
+	"net/http"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -45,7 +46,7 @@ type BccSession struct {
 	msgChan      chan *browsercontroller.DoReply
 	completeChan chan *completeMsg
 	span         opentracing.Span
-	done         chan bool
+	done         chan *doneMsg
 	complete     *completeMsg
 	m            sync.Mutex
 	bccCtx       context.Context
@@ -54,6 +55,11 @@ type BccSession struct {
 type completeMsg struct {
 	cl  *frontier.CrawlLog
 	err error
+}
+
+type doneMsg struct {
+	resp *http.Response
+	err  error
 }
 
 func (rc *RecordContext) getBccSession() (*BccSession, error) {
@@ -84,17 +90,19 @@ func (rc *RecordContext) getBccSession() (*BccSession, error) {
 
 	b.msgChan = make(chan *browsercontroller.DoReply)
 	b.completeChan = make(chan *completeMsg)
-	b.done = make(chan bool)
+	b.done = make(chan *doneMsg)
 
-	finish := func() {
+	finish := func(resp *http.Response) {
 		b.m.Lock()
 		defer b.m.Unlock()
 		if GetRecordContext(rc.ctx) != nil {
+			var clStatusCode int32
 			if b.complete != nil {
 				if b.complete.err != nil {
 					l.WithError(b.complete.err).Info("Session completed with error")
 				}
 
+				clStatusCode = b.complete.cl.StatusCode
 				err := rc.saveCrawlLogUnlocked(b, b.complete.cl)
 
 				if err != nil {
@@ -105,6 +113,7 @@ func (rc *RecordContext) getBccSession() (*BccSession, error) {
 			} else {
 				l.Info("Browser controller client session canceled by client")
 
+				clStatusCode = int32(errors.CanceledByBrowser)
 				rc.CrawlLog.StatusCode = int32(errors.CanceledByBrowser)
 				rc.CrawlLog.RecordType = constants.RecordResponse
 				rc.CrawlLog.ContentType = ""
@@ -121,7 +130,11 @@ func (rc *RecordContext) getBccSession() (*BccSession, error) {
 			}
 			SetRecordContext(rc.ctx, nil)
 			atomic.AddInt64(&closedSess, 1)
-			rc.log.Infof("Session completed")
+			l := rc.log.WithField("clStatusCode", clStatusCode)
+			if resp != nil {
+				l = l.WithField("statusCode", resp.StatusCode)
+			}
+			l.Infof("Session completed")
 			cancel()
 		}
 	}
@@ -130,15 +143,15 @@ func (rc *RecordContext) getBccSession() (*BccSession, error) {
 		for {
 			select {
 			case <-rc.ctx.Done():
-				finish()
+				finish(nil)
 				return
-			case normalExit := <-b.done:
-				if normalExit {
+			case doneMsg := <-b.done:
+				if doneMsg.err == nil {
 					l.Debugf("Finished sending response downstream.")
 				} else {
 					l.Debugf("Finished sending response downstream with error.")
 				}
-				finish()
+				finish(doneMsg.resp)
 				return
 			case completeMsg := <-b.completeChan:
 				if b.complete != nil {
@@ -277,13 +290,12 @@ func (rc *RecordContext) getCwcSession() (*CwcSession, error) {
 	return c, nil
 }
 
-func (rc *RecordContext) ResponseCompleted(writeErr error) {
+func (rc *RecordContext) ResponseCompleted(resp *http.Response, writeErr error) {
 	if b, err := rc.getBccSession(); err == nil {
-		if writeErr == nil {
-			b.done <- true
-		} else {
-			b.done <- false
-		}
+		b.done <- &doneMsg{resp: resp, err: err}
+	}
+	if writeErr != nil {
+		rc.CancelContentWriter("Veidemann recorder proxy lost connection to client")
 	}
 }
 
