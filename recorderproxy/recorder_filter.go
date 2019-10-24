@@ -90,6 +90,10 @@ func (f *RecorderFilter) filterRequest(c filters.Context, span opentracing.Span,
 
 	var prolog bytes.Buffer
 	err := writeRequestProlog(req, &prolog)
+	if err != nil {
+		e := errors.WrapInternalError(err, errors.RuntimeException, "Unable to write request headers", err.Error())
+		return req, e
+	}
 
 	fetchTimeStamp, _ := ptypes.TimestampProto(rc.FetchTimesTamp)
 	uri := rc.Uri
@@ -141,11 +145,14 @@ func (f *RecorderFilter) filterResponse(c filters.Context, span opentracing.Span
 	}
 
 	var prolog bytes.Buffer
-	writeResponseProlog(resp, &prolog)
+	err := writeResponseProlog(resp, &prolog)
+	if err != nil {
+		e := errors.WrapInternalError(err, errors.RuntimeException, "Unable to write response headers", err.Error())
+		return resp, e
+	}
 
 	contentType := resp.Header.Get("Content-Type")
 	statusCode := int32(resp.StatusCode)
-	var err error
 	bodyWrapper, err := WrapResponseBody(c, resp.Body, statusCode, contentType, contentwriter.RecordType_RESPONSE, prolog.Bytes())
 	if err != nil {
 		e := errors.WrapInternalError(err, errors.RuntimeException, "Veidemann proxy lost connection to GRPC services", err.Error())
