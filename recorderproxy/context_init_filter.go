@@ -49,11 +49,6 @@ func (f *ContextInitFilter) Apply(ctx filters.Context, req *http.Request, next f
 		l.Debugf("Converted CONNECT request uri form %v to %v", req.URL, uri)
 		resp, context, err = next(ctx, req)
 	} else {
-		rc := context2.GetRecordContext(ctx)
-		if rc != nil {
-			rc.WaitForCompleted()
-		}
-
 		if context2.GetHost(ctx) == "" {
 			context2.SetHost(ctx, req.URL.Hostname())
 		}
@@ -67,7 +62,7 @@ func (f *ContextInitFilter) Apply(ctx filters.Context, req *http.Request, next f
 
 		l.Debugf("Converted GET request uri form %v to %v", req.URL, uri)
 
-		rc = context2.NewRecordContext()
+		rc := context2.NewRecordContext()
 		context2.SetRecordContext(ctx, rc)
 		req = req.WithContext(ctx)
 		span := opentracing.SpanFromContext(ctx)

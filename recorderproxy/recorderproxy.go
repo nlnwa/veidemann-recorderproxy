@@ -112,7 +112,8 @@ func NewRecorderProxy(id int, addr string, port int, conn *serviceconnections.Co
 
 			rc := context2.GetRecordContext(ctx)
 			if rc != nil {
-				rc.ResponseCompleted(err)
+				rc.ResponseCompleted(resp, err)
+				rc.WaitForCompleted()
 			}
 			return err
 		},

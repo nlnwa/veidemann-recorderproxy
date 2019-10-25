@@ -100,6 +100,10 @@ func (rc *RecordContext) Init(proxyId int32, conn *serviceconnections.Connection
 		span.LogKV("event", "CollectionIdFromHeader", "CollectionId", rc.CollectionRef.Id)
 	}
 
+	req.Header.Del(constants.HeaderCrawlExecutionId)
+	req.Header.Del(constants.HeaderJobExecutionId)
+	req.Header.Del(constants.HeaderCollectionId)
+
 	rc.FetchTimesTamp = time.Now()
 	fetchTimeStamp, _ := ptypes.TimestampProto(rc.FetchTimesTamp)
 
