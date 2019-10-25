@@ -604,6 +604,8 @@ func (test *test) generateExpectedRequests() {
 	switch n := test.name; {
 	case strings.HasSuffix(n, ":client timeout"):
 		test.generateClientTimeoutRequests()
+	case strings.HasSuffix(n, ":replace"):
+		test.generateReplaceRequests()
 	case strings.HasSuffix(n, ":server timeout"):
 		test.generateServerTimeoutRequests()
 	case strings.HasSuffix(n, ":grpc service timeout"):
@@ -631,6 +633,8 @@ func (test *test) generateExpectedRequestsForRecorderProxyThroughProxy() {
 	switch n := test.name; {
 	case strings.HasSuffix(n, ":client timeout"):
 		test.generateClientTimeoutRequests()
+	case strings.HasSuffix(n, ":replace"):
+		test.generateReplaceRequests()
 	case strings.HasSuffix(n, ":server timeout"):
 		test.generateServerTimeoutRequests()
 	case strings.HasSuffix(n, ":grpc service timeout"):
@@ -660,13 +664,57 @@ func (test *test) parseUrlAndPort() (*url.URL, int) {
 	return u, p
 }
 
-func generateBccNewRequest(url string) *browsercontrollerV1.DoRequest {
-	return &browsercontrollerV1.DoRequest{
-		Action: &browsercontrollerV1.DoRequest_New{New: &browsercontrollerV1.RegisterNew{
-			ProxyId: 0,
-			Uri:     url,
-		}},
+func isHttps(uri string) (ok bool, pathStrippedUrl string) {
+	u, err := url.Parse(uri)
+	if err != nil {
+		panic("Failed parsing URL: " + uri)
 	}
+	if strings.ToLower(u.Scheme) == "https" {
+		ok = true
+		u.Path = ""
+		pathStrippedUrl = u.String()
+	}
+	return
+}
+
+func generateBccNewRequests(url string, alreadyConnected bool) []*browsercontrollerV1.DoRequest {
+	var r []*browsercontrollerV1.DoRequest
+	https, u := isHttps(url)
+	if https && !alreadyConnected {
+		r = append(r,
+			&browsercontrollerV1.DoRequest{
+				Action: &browsercontrollerV1.DoRequest_New{New: &browsercontrollerV1.RegisterNew{
+					ProxyId: 0,
+					Method:  "CONNECT",
+					Uri:     u,
+				}},
+			})
+	}
+
+	if https || alreadyConnected {
+		r = append(r,
+			&browsercontrollerV1.DoRequest{
+				Action: &browsercontrollerV1.DoRequest_New{New: &browsercontrollerV1.RegisterNew{
+					ProxyId: 0,
+					Method:  "GET",
+					Uri:     url,
+					CollectionRef: &configV1.ConfigRef{
+						Kind: configV1.Kind_collection,
+						Id:   "col1",
+					},
+				}},
+			})
+	} else {
+		r = append(r,
+			&browsercontrollerV1.DoRequest{
+				Action: &browsercontrollerV1.DoRequest_New{New: &browsercontrollerV1.RegisterNew{
+					ProxyId: 0,
+					Method:  "GET",
+					Uri:     url,
+				}},
+			})
+	}
+	return r
 }
 
 func generateBccDataReceivedRequest() *browsercontrollerV1.DoRequest {
@@ -721,17 +769,18 @@ func (test *test) generateSuccessRequests() {
 		{Host: u.Hostname(), Port: int32(p), CollectionRef: &configV1.ConfigRef{Kind: configV1.Kind_collection, Id: "col1"}},
 	}
 
-	r.BrowserControllerRequests = []*browsercontrollerV1.DoRequest{
-		generateBccNewRequest(test.url),
+	r.BrowserControllerRequests = append(
+		generateBccNewRequests(test.url, false),
 		generateBccDataReceivedRequest(),
 		generateBccAllDataReceivedRequest(),
-		{
+		&browsercontrollerV1.DoRequest{
 			Action: &browsercontrollerV1.DoRequest_Completed{
 				Completed: &browsercontrollerV1.Completed{
 					CrawlLog: &frontier.CrawlLog{
 						WarcId:              "warcid_1",
 						StatusCode:          int32(test.wantStatus),
 						Size:                test.wantResponseBlockSize,
+						Method:              "GET",
 						RequestedUri:        test.url,
 						ContentType:         "text/plain; charset=utf-8",
 						StorageRef:          "storageRef_1",
@@ -745,7 +794,7 @@ func (test *test) generateSuccessRequests() {
 				},
 			},
 		},
-	}
+	)
 
 	requestHeader, requestLength := generateCwProtocolHeaderRequest(u, test.keepAlive)
 	r.ContentWriterRequests = []*contentwriterV1.WriteRequest{
@@ -786,20 +835,17 @@ func (test *test) generateSuccessRequests() {
 }
 
 func (test *test) generateClientTimeoutRequests() {
-	u, p := test.parseUrlAndPort()
 	r := &testutil.Requests{}
-	r.DnsResolverRequests = []*dnsresolverV1.ResolveRequest{
-		{Host: u.Hostname(), Port: int32(p), CollectionRef: &configV1.ConfigRef{Kind: configV1.Kind_collection, Id: "col1"}},
-	}
 
-	r.BrowserControllerRequests = []*browsercontrollerV1.DoRequest{
-		generateBccNewRequest(test.url),
-		{
+	r.BrowserControllerRequests = append(
+		generateBccNewRequests(test.url, true),
+		&browsercontrollerV1.DoRequest{
 			Action: &browsercontrollerV1.DoRequest_Completed{
 				Completed: &browsercontrollerV1.Completed{
 					CrawlLog: &frontier.CrawlLog{
 						StatusCode:     -5011,
 						RequestedUri:   test.url,
+						Method:         "GET",
 						RecordType:     "response",
 						IpAddress:      "127.0.0.1",
 						ExecutionId:    "eid",
@@ -813,7 +859,7 @@ func (test *test) generateClientTimeoutRequests() {
 				},
 			},
 		},
-	}
+	)
 
 	r.ContentWriterRequests = []*contentwriterV1.WriteRequest{
 		{
@@ -831,22 +877,89 @@ func (test *test) generateClientTimeoutRequests() {
 	test.wantGrpcRequests = r
 }
 
-func (test *test) generateServerTimeoutRequests() {
-	u, p := test.parseUrlAndPort()
+func (test *test) generateReplaceRequests() {
+	u, _ := test.parseUrlAndPort()
+
 	r := &testutil.Requests{}
-	r.DnsResolverRequests = []*dnsresolverV1.ResolveRequest{
-		{Host: u.Hostname(), Port: int32(p), CollectionRef: &configV1.ConfigRef{Kind: configV1.Kind_collection, Id: "col1"}},
+
+	r.BrowserControllerRequests = append(
+		generateBccNewRequests(test.url, true),
+		generateBccDataReceivedRequest(),
+		generateBccAllDataReceivedRequest(),
+		&browsercontrollerV1.DoRequest{
+			Action: &browsercontrollerV1.DoRequest_Completed{
+				Completed: &browsercontrollerV1.Completed{
+					CrawlLog: &frontier.CrawlLog{
+						WarcId:              "warcid_1",
+						StatusCode:          int32(test.wantStatus),
+						Size:                test.wantResponseBlockSize,
+						Method:              "GET",
+						RequestedUri:        test.url,
+						ContentType:         "text/plain; charset=utf-8",
+						StorageRef:          "storageRef_1",
+						RecordType:          "revisit",
+						WarcRefersTo:        "revisit_0",
+						IpAddress:           "127.0.0.1",
+						ExecutionId:         "eid",
+						JobExecutionId:      "jid",
+						CollectionFinalName: "collection_0",
+					},
+				},
+			},
+		},
+	)
+
+	requestHeader, requestLength := generateCwProtocolHeaderRequest(u, test.keepAlive)
+	r.ContentWriterRequests = []*contentwriterV1.WriteRequest{
+		requestHeader,
+		generateCwProtocolHeaderResponse(test.wantStatus, len(test.wantContent)),
+		{
+			Value: &contentwriterV1.WriteRequest_Payload{
+				Payload: &contentwriterV1.Data{RecordNum: 1, Data: []byte(test.wantContent)},
+			},
+		},
+		{
+			Value: &contentwriterV1.WriteRequest_Meta{
+				Meta: &contentwriterV1.WriteRequestMeta{
+					ExecutionId:   "eid",
+					TargetUri:     test.url,
+					IpAddress:     "127.0.0.1",
+					CollectionRef: &configV1.ConfigRef{Kind: configV1.Kind_collection, Id: "col1"},
+					RecordMeta: map[int32]*contentwriterV1.WriteRequestMeta_RecordMeta{
+						0: {
+							RecordNum:         0,
+							Type:              contentwriterV1.RecordType_REQUEST,
+							RecordContentType: "application/http; msgtype=request",
+							Size:              requestLength,
+						},
+						1: {
+							RecordNum:         1,
+							Type:              contentwriterV1.RecordType_RESPONSE,
+							RecordContentType: "application/http; msgtype=response",
+							Size:              test.wantResponseBlockSize,
+						},
+					},
+				},
+			},
+		},
 	}
 
-	r.BrowserControllerRequests = []*browsercontrollerV1.DoRequest{
-		generateBccNewRequest(test.url),
+	test.wantGrpcRequests = r
+}
+
+func (test *test) generateServerTimeoutRequests() {
+	r := &testutil.Requests{}
+
+	r.BrowserControllerRequests = append(
+		generateBccNewRequests(test.url, true),
 		generateBccAllDataReceivedRequest(),
-		{
+		&browsercontrollerV1.DoRequest{
 			Action: &browsercontrollerV1.DoRequest_Completed{
 				Completed: &browsercontrollerV1.Completed{
 					CrawlLog: &frontier.CrawlLog{
 						StatusCode:     -404,
 						RequestedUri:   test.url,
+						Method:         "GET",
 						RecordType:     "response",
 						IpAddress:      "127.0.0.1",
 						ExecutionId:    "eid",
@@ -860,7 +973,7 @@ func (test *test) generateServerTimeoutRequests() {
 				},
 			},
 		},
-	}
+	)
 
 	r.ContentWriterRequests = []*contentwriterV1.WriteRequest{
 		{
@@ -880,21 +993,11 @@ func (test *test) generateGrpcServiceTimeoutRequests() {
 		{Host: u.Hostname(), Port: int32(p), CollectionRef: &configV1.ConfigRef{Kind: configV1.Kind_collection, Id: "col1"}},
 	}
 
-	r.BrowserControllerRequests = []*browsercontrollerV1.DoRequest{
-		generateBccNewRequest(test.url),
-	}
+	r.BrowserControllerRequests = generateBccNewRequests(test.url, false)
 
 	requestHeader, _ := generateCwProtocolHeaderRequest(u, test.keepAlive)
 	r.ContentWriterRequests = []*contentwriterV1.WriteRequest{
 		requestHeader,
-		//{
-		//	Value: &contentwriterV1.WriteRequest_ProtocolHeader{
-		//		ProtocolHeader: &contentwriterV1.Data{
-		//			//RecordNum: 0, Data: []byte(fmt.Sprintf("GET %s HTTP/1.1\r\nHost: %s:%s\r\nAccept-Encoding: gzip\r\nConnection: close\r\nUser-Agent: Go-http-client/1.1\r\n", u.Path, u.Hostname(), u.Port())),
-		//			RecordNum: 0, Data: []byte(fmt.Sprintf("GET %s HTTP/1.1\r\nHost: %s:%s\r\nAccept-Encoding: gzip\r\nUser-Agent: Go-http-client/1.1\r\n", u.Path, u.Hostname(), u.Port())),
-		//		},
-		//	},
-		//},
 	}
 
 	test.wantGrpcRequests = r
@@ -907,13 +1010,14 @@ func (test *test) generateBrowserControllerCancelRequests() {
 		{Host: u.Hostname(), Port: int32(p), CollectionRef: &configV1.ConfigRef{Kind: configV1.Kind_collection, Id: "col1"}},
 	}
 
-	r.BrowserControllerRequests = []*browsercontrollerV1.DoRequest{
-		generateBccNewRequest(test.url),
-		{
+	r.BrowserControllerRequests = append(
+		generateBccNewRequests(test.url, false),
+		&browsercontrollerV1.DoRequest{
 			Action: &browsercontrollerV1.DoRequest_Completed{
 				Completed: &browsercontrollerV1.Completed{
 					CrawlLog: &frontier.CrawlLog{
 						StatusCode:     -5011,
+						Method:         "GET",
 						RequestedUri:   test.url,
 						RecordType:     "response",
 						IpAddress:      "127.0.0.1",
@@ -928,7 +1032,7 @@ func (test *test) generateBrowserControllerCancelRequests() {
 				},
 			},
 		},
-	}
+	)
 
 	r.ContentWriterRequests = []*contentwriterV1.WriteRequest{
 		{
@@ -943,18 +1047,18 @@ func (test *test) generateBrowserControllerCancelRequests() {
 
 func (test *test) generateBlockedByRobotsTxtRequests() {
 	r := &testutil.Requests{}
-	r.DnsResolverRequests = []*dnsresolverV1.ResolveRequest{}
-
-	r.BrowserControllerRequests = []*browsercontrollerV1.DoRequest{
-		generateBccNewRequest(test.url),
+	r.BrowserControllerRequests = append(
+		generateBccNewRequests(test.url, true),
 		generateBccAllDataReceivedRequest(),
-		{
+		&browsercontrollerV1.DoRequest{
 			Action: &browsercontrollerV1.DoRequest_Completed{
 				Completed: &browsercontrollerV1.Completed{
 					CrawlLog: &frontier.CrawlLog{
 						StatusCode:   -9998,
+						Method:       "GET",
 						RequestedUri: test.url,
 						RecordType:   "response",
+						IpAddress:    "127.0.0.1",
 						Error: &commons.Error{
 							Code:   -9998,
 							Msg:    "PRECLUDED_BY_ROBOTS",
@@ -964,7 +1068,7 @@ func (test *test) generateBlockedByRobotsTxtRequests() {
 				},
 			},
 		},
-	}
+	)
 
 	r.ContentWriterRequests = []*contentwriterV1.WriteRequest{}
 
@@ -972,12 +1076,16 @@ func (test *test) generateBlockedByRobotsTxtRequests() {
 }
 
 func (test *test) generateBrowserControllerErrorRequests() {
+	u, p := test.parseUrlAndPort()
 	r := &testutil.Requests{}
-	r.DnsResolverRequests = []*dnsresolverV1.ResolveRequest{}
 
-	r.BrowserControllerRequests = []*browsercontrollerV1.DoRequest{
-		generateBccNewRequest(test.url),
+	if u.Scheme == "https" {
+		r.DnsResolverRequests = []*dnsresolverV1.ResolveRequest{
+			{Host: u.Hostname(), Port: int32(p), CollectionRef: &configV1.ConfigRef{Kind: configV1.Kind_collection, Id: "col1"}},
+		}
 	}
+
+	r.BrowserControllerRequests = generateBccNewRequests(test.url, false)
 
 	r.ContentWriterRequests = []*contentwriterV1.WriteRequest{}
 
@@ -991,15 +1099,16 @@ func (test *test) generateContentWriterErrorRequests() {
 		{Host: u.Hostname(), Port: int32(p), CollectionRef: &configV1.ConfigRef{Kind: configV1.Kind_collection, Id: "col1"}},
 	}
 
-	r.BrowserControllerRequests = []*browsercontrollerV1.DoRequest{
-		generateBccNewRequest(test.url),
+	r.BrowserControllerRequests = append(
+		generateBccNewRequests(test.url, false),
 		generateBccDataReceivedRequest(),
 		generateBccAllDataReceivedRequest(),
-		{
+		&browsercontrollerV1.DoRequest{
 			Action: &browsercontrollerV1.DoRequest_Completed{
 				Completed: &browsercontrollerV1.Completed{
 					CrawlLog: &frontier.CrawlLog{
 						StatusCode:     -5,
+						Method:         "GET",
 						RequestedUri:   test.url,
 						RecordType:     "response",
 						IpAddress:      "127.0.0.1",
@@ -1014,25 +1123,12 @@ func (test *test) generateContentWriterErrorRequests() {
 				},
 			},
 		},
-	}
+	)
 
 	requestHeader, requestLength := generateCwProtocolHeaderRequest(u, test.keepAlive)
 	r.ContentWriterRequests = []*contentwriterV1.WriteRequest{
 		requestHeader,
 		generateCwProtocolHeaderResponse(test.wantStatus, len(test.wantContent)),
-		//r.ContentWriterRequests = []*contentwriterV1.WriteRequest{
-		//	{
-		//		Value: &contentwriterV1.WriteRequest_ProtocolHeader{
-		//			ProtocolHeader: &contentwriterV1.Data{
-		//				//RecordNum: 0, Data: []byte(fmt.Sprintf("GET %s HTTP/1.1\r\nHost: %s:%s\r\nAccept-Encoding: gzip\r\nConnection: close\r\nUser-Agent: Go-http-client/1.1\r\n", u.Path, u.Hostname(), u.Port()))},
-		//				RecordNum: 0, Data: []byte(fmt.Sprintf("GET %s HTTP/1.1\r\nHost: %s:%s\r\nAccept-Encoding: gzip\r\nUser-Agent: Go-http-client/1.1\r\n", u.Path, u.Hostname(), u.Port()))},
-		//		},
-		//	},
-		//	{
-		//		Value: &contentwriterV1.WriteRequest_ProtocolHeader{
-		//			ProtocolHeader: &contentwriterV1.Data{RecordNum: 1, Data: []byte(fmt.Sprintf("HTTP/1.1 %d %s\r\nContent-Length: %d\r\nContent-Type: text/plain; charset=utf-8\r\nDate: Wed, 15 May 2019 12:41:02 GMT\r\n", test.wantStatus, http.StatusText(test.wantStatus), len(test.wantContent)))},
-		//		},
-		//	},
 		{
 			Value: &contentwriterV1.WriteRequest_Payload{
 				Payload: &contentwriterV1.Data{RecordNum: 1, Data: []byte(test.wantContent)},
@@ -1068,20 +1164,18 @@ func (test *test) generateContentWriterErrorRequests() {
 }
 
 func (test *test) generateCachedRequests() {
-	u, p := test.parseUrlAndPort()
+	u, _ := test.parseUrlAndPort()
 	r := &testutil.Requests{}
-	r.DnsResolverRequests = []*dnsresolverV1.ResolveRequest{
-		{Host: u.Hostname(), Port: int32(p), CollectionRef: &configV1.ConfigRef{Kind: configV1.Kind_collection, Id: "col1"}},
-	}
 
-	r.BrowserControllerRequests = []*browsercontrollerV1.DoRequest{
-		generateBccNewRequest(test.url),
-		{
+	r.BrowserControllerRequests = append(
+		generateBccNewRequests(test.url, true),
+		&browsercontrollerV1.DoRequest{
 			Action: &browsercontrollerV1.DoRequest_Completed{
 				Completed: &browsercontrollerV1.Completed{
 					CrawlLog: &frontier.CrawlLog{
 						StatusCode:     int32(test.wantStatus),
 						Size:           test.wantResponseBlockSize,
+						Method:         "GET",
 						RequestedUri:   test.url,
 						ContentType:    "text/plain; charset=utf-8",
 						IpAddress:      "127.0.0.1",
@@ -1092,19 +1186,11 @@ func (test *test) generateCachedRequests() {
 				},
 			},
 		},
-	}
+	)
 
 	requestHeader, _ := generateCwProtocolHeaderRequest(u, test.keepAlive)
 	r.ContentWriterRequests = []*contentwriterV1.WriteRequest{
 		requestHeader,
-		//r.ContentWriterRequests = []*contentwriterV1.WriteRequest{
-		//	{
-		//		Value: &contentwriterV1.WriteRequest_ProtocolHeader{
-		//			ProtocolHeader: &contentwriterV1.Data{
-		//				//RecordNum: 0, Data: []byte(fmt.Sprintf("GET %s HTTP/1.1\r\nHost: %s:%s\r\nAccept-Encoding: gzip\r\nConnection: close\r\nUser-Agent: Go-http-client/1.1\r\n", u.Path, u.Hostname(), u.Port()))},
-		//				RecordNum: 0, Data: []byte(fmt.Sprintf("GET %s HTTP/1.1\r\nHost: %s:%s\r\nAccept-Encoding: gzip\r\nUser-Agent: Go-http-client/1.1\r\n", u.Path, u.Hostname(), u.Port()))},
-		//		},
-		//	},
 		{
 			Value: &contentwriterV1.WriteRequest_Cancel{
 				Cancel: "OK: Loaded from cache",
@@ -1118,18 +1204,22 @@ func (test *test) generateCachedRequests() {
 func (test *test) generateConnectionRefusedRequests() {
 	u, p := test.parseUrlAndPort()
 	r := &testutil.Requests{}
-	r.DnsResolverRequests = []*dnsresolverV1.ResolveRequest{
-		{Host: u.Hostname(), Port: int32(p), CollectionRef: &configV1.ConfigRef{Kind: configV1.Kind_collection, Id: "col1"}},
+	if u.Scheme == "https" {
+		r.DnsResolverRequests = []*dnsresolverV1.ResolveRequest{
+			{Host: u.Hostname(), Port: int32(p), CollectionRef: &configV1.ConfigRef{Kind: configV1.Kind_collection, Id: "col1"}},
+		}
 	}
 
-	r.BrowserControllerRequests = []*browsercontrollerV1.DoRequest{
-		generateBccNewRequest(test.url),
+	https, _ := isHttps(test.url)
+	r.BrowserControllerRequests = append(
+		generateBccNewRequests(test.url, !https),
 		generateBccAllDataReceivedRequest(),
-		{
+		&browsercontrollerV1.DoRequest{
 			Action: &browsercontrollerV1.DoRequest_Completed{
 				Completed: &browsercontrollerV1.Completed{
 					CrawlLog: &frontier.CrawlLog{
 						StatusCode:     -2,
+						Method:         "GET",
 						RequestedUri:   test.url,
 						RecordType:     "response",
 						IpAddress:      "127.0.0.1",
@@ -1144,19 +1234,11 @@ func (test *test) generateConnectionRefusedRequests() {
 				},
 			},
 		},
-	}
+	)
 
 	requestHeader, _ := generateCwProtocolHeaderRequest(u, test.keepAlive)
 	r.ContentWriterRequests = []*contentwriterV1.WriteRequest{
 		requestHeader,
-		//r.ContentWriterRequests = []*contentwriterV1.WriteRequest{
-		//	{
-		//		Value: &contentwriterV1.WriteRequest_ProtocolHeader{
-		//			ProtocolHeader: &contentwriterV1.Data{
-		//				//RecordNum: 0, Data: []byte(fmt.Sprintf("GET %s HTTP/1.1\r\nHost: %s:%s\r\nAccept-Encoding: gzip\r\nConnection: close\r\nUser-Agent: Go-http-client/1.1\r\n", u.Path, u.Hostname(), u.Port()))},
-		//				RecordNum: 0, Data: []byte(fmt.Sprintf("GET %s HTTP/1.1\r\nHost: %s:%s\r\nAccept-Encoding: gzip\r\nUser-Agent: Go-http-client/1.1\r\n", u.Path, u.Hostname(), u.Port()))},
-		//		},
-		//	},
 		{
 			Value: &contentwriterV1.WriteRequest_Cancel{
 				Cancel: "connect: connection refused",
@@ -1174,14 +1256,15 @@ func (test *test) generateHandshakeFailureRequests(errorMessage string) {
 		{Host: u.Hostname(), Port: int32(p), CollectionRef: &configV1.ConfigRef{Kind: configV1.Kind_collection, Id: "col1"}},
 	}
 
-	r.BrowserControllerRequests = []*browsercontrollerV1.DoRequest{
-		generateBccNewRequest(test.url),
+	r.BrowserControllerRequests = append(
+		generateBccNewRequests(test.url, false),
 		generateBccAllDataReceivedRequest(),
-		{
+		&browsercontrollerV1.DoRequest{
 			Action: &browsercontrollerV1.DoRequest_Completed{
 				Completed: &browsercontrollerV1.Completed{
 					CrawlLog: &frontier.CrawlLog{
 						StatusCode:     -2,
+						Method:         "GET",
 						RequestedUri:   test.url,
 						RecordType:     "response",
 						IpAddress:      "127.0.0.1",
@@ -1196,7 +1279,7 @@ func (test *test) generateHandshakeFailureRequests(errorMessage string) {
 				},
 			},
 		},
-	}
+	)
 
 	r.ContentWriterRequests = []*contentwriterV1.WriteRequest{}
 

@@ -55,12 +55,9 @@ type RecordContext struct {
 	ctx               context.Context
 	cwc               *CwcSession
 	bcc               *BccSession
+	Method            string
 	Uri               *url.URL
-	IP                string
 	FetchTimesTamp    time.Time
-	CrawlExecutionId  string
-	JobExecutionId    string
-	CollectionRef     *config.ConfigRef
 	Meta              *contentwriter.WriteRequest_Meta
 	CrawlLog          *frontier.CrawlLog
 	ReplacementScript *config.BrowserScript
@@ -88,16 +85,21 @@ func (rc *RecordContext) Init(proxyId int32, conn *serviceconnections.Connection
 	rc.conn = conn
 	rc.ctx = req.Context()
 	rc.ProxyId = proxyId
-	rc.CrawlExecutionId = req.Header.Get(constants.HeaderCrawlExecutionId)
-	rc.JobExecutionId = req.Header.Get(constants.HeaderJobExecutionId)
+	rc.Method = req.Method
 	rc.Uri = uri
 
+	jid := req.Header.Get(constants.HeaderJobExecutionId)
+	eid := req.Header.Get(constants.HeaderCrawlExecutionId)
+	SetJobExecutionId(rc.ctx, jid)
+	SetCrawlExecutionId(rc.ctx, eid)
+
 	if req.Header.Get(constants.HeaderCollectionId) != "" {
-		rc.CollectionRef = &config.ConfigRef{
+		cid := req.Header.Get(constants.HeaderCollectionId)
+		SetCollectionRef(rc.ctx, &config.ConfigRef{
 			Kind: config.Kind_collection,
-			Id:   req.Header.Get(constants.HeaderCollectionId),
-		}
-		span.LogKV("event", "CollectionIdFromHeader", "CollectionId", rc.CollectionRef.Id)
+			Id:   cid,
+		})
+		span.LogKV("event", "CollectionIdFromHeader", "CollectionId", cid)
 	}
 
 	req.Header.Del(constants.HeaderCrawlExecutionId)
@@ -108,10 +110,12 @@ func (rc *RecordContext) Init(proxyId int32, conn *serviceconnections.Connection
 	fetchTimeStamp, _ := ptypes.TimestampProto(rc.FetchTimesTamp)
 
 	rc.CrawlLog = &frontier.CrawlLog{
-		JobExecutionId: rc.JobExecutionId,
-		ExecutionId:    rc.CrawlExecutionId,
+		JobExecutionId: jid,
+		ExecutionId:    eid,
 		FetchTimeStamp: fetchTimeStamp,
 		RequestedUri:   uri.String(),
+		Method:         rc.Method,
+		IpAddress:      GetIp(rc.ctx),
 	}
 
 	rc.InitDone = true
