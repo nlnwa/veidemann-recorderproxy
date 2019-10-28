@@ -22,7 +22,6 @@ import (
 	"fmt"
 	"github.com/getlantern/proxy/filters"
 	"github.com/nlnwa/veidemann-api-go/browsercontroller/v1"
-	"github.com/nlnwa/veidemann-api-go/config/v1"
 	"github.com/nlnwa/veidemann-api-go/frontier/v1"
 	"github.com/nlnwa/veidemann-recorderproxy/constants"
 	"github.com/nlnwa/veidemann-recorderproxy/errors"
@@ -485,15 +484,20 @@ func (rc *RecordContext) notifyDataReceived(activity browsercontroller.NotifyAct
 	return err
 }
 
-func RegisterConnectRequest(ctx filters.Context, conn *serviceconnections.Connections, proxyId int32, uri *url.URL) (jid, eid string, cid *config.ConfigRef) {
+func RegisterConnectRequest(ctx filters.Context, conn *serviceconnections.Connections, proxyId int32, req *http.Request, uri *url.URL) {
 	l := LogWithContext(ctx, "PROXY:BCC")
+
+	resolveIdsFromHttpHeader(ctx, req)
 
 	bccRequest := &browsercontroller.DoRequest{
 		Action: &browsercontroller.DoRequest_New{
 			New: &browsercontroller.RegisterNew{
-				ProxyId: proxyId,
-				Method:  "CONNECT",
-				Uri:     uri.String(),
+				ProxyId:          proxyId,
+				Method:           "CONNECT",
+				Uri:              uri.String(),
+				CrawlExecutionId: GetCrawlExecutionId(ctx),
+				JobExecutionId:   GetJobExecutionId(ctx),
+				CollectionRef:    GetCollectionRef(ctx),
 			},
 		},
 	}
@@ -516,13 +520,17 @@ func RegisterConnectRequest(ctx filters.Context, conn *serviceconnections.Connec
 
 	switch v := doReply.Action.(type) {
 	case *browsercontroller.DoReply_New:
-		jid = v.New.JobExecutionId
-		eid = v.New.CrawlExecutionId
-		cid = v.New.CollectionRef
+		SetJobExecutionId(ctx, v.New.JobExecutionId)
+		SetCrawlExecutionId(ctx, v.New.CrawlExecutionId)
+		SetCollectionRef(ctx, v.New.CollectionRef)
 	}
 
 	_ = bcc.CloseSend()
+	for {
+		_, e := bcc.Recv()
+		if e != nil {
+			break
+		}
+	}
 	cancel()
-
-	return
 }

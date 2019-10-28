@@ -25,7 +25,6 @@ import (
 	"github.com/nlnwa/veidemann-recorderproxy/constants"
 	"github.com/nlnwa/veidemann-recorderproxy/logger"
 	"github.com/nlnwa/veidemann-recorderproxy/serviceconnections"
-	"github.com/opentracing/opentracing-go"
 	log "github.com/sirupsen/logrus"
 	"net/http"
 	"net/url"
@@ -81,26 +80,13 @@ func NewRecordContext() *RecordContext {
 }
 
 func (rc *RecordContext) Init(proxyId int32, conn *serviceconnections.Connections, req *http.Request, uri *url.URL) *RecordContext {
-	span := opentracing.SpanFromContext(req.Context())
 	rc.conn = conn
 	rc.ctx = req.Context()
 	rc.ProxyId = proxyId
 	rc.Method = req.Method
 	rc.Uri = uri
 
-	jid := req.Header.Get(constants.HeaderJobExecutionId)
-	eid := req.Header.Get(constants.HeaderCrawlExecutionId)
-	SetJobExecutionId(rc.ctx, jid)
-	SetCrawlExecutionId(rc.ctx, eid)
-
-	if req.Header.Get(constants.HeaderCollectionId) != "" {
-		cid := req.Header.Get(constants.HeaderCollectionId)
-		SetCollectionRef(rc.ctx, &config.ConfigRef{
-			Kind: config.Kind_collection,
-			Id:   cid,
-		})
-		span.LogKV("event", "CollectionIdFromHeader", "CollectionId", cid)
-	}
+	resolveIdsFromHttpHeader(rc.ctx, req)
 
 	req.Header.Del(constants.HeaderCrawlExecutionId)
 	req.Header.Del(constants.HeaderJobExecutionId)
@@ -110,8 +96,8 @@ func (rc *RecordContext) Init(proxyId int32, conn *serviceconnections.Connection
 	fetchTimeStamp, _ := ptypes.TimestampProto(rc.FetchTimesTamp)
 
 	rc.CrawlLog = &frontier.CrawlLog{
-		JobExecutionId: jid,
-		ExecutionId:    eid,
+		JobExecutionId: GetJobExecutionId(rc.ctx),
+		ExecutionId:    GetCrawlExecutionId(rc.ctx),
 		FetchTimeStamp: fetchTimeStamp,
 		RequestedUri:   uri.String(),
 		Method:         rc.Method,
@@ -165,4 +151,20 @@ func LogWithContextAndRequest(ctx context.Context, req *http.Request, componentN
 	}
 	l = l.WithField("component", componentName)
 	return l
+}
+
+func resolveIdsFromHttpHeader(ctx context.Context, req *http.Request) {
+	jid := req.Header.Get(constants.HeaderJobExecutionId)
+	eid := req.Header.Get(constants.HeaderCrawlExecutionId)
+	SetJobExecutionId(ctx, jid)
+	SetCrawlExecutionId(ctx, eid)
+
+	if req.Header.Get(constants.HeaderCollectionId) != "" {
+		cid := req.Header.Get(constants.HeaderCollectionId)
+		SetCollectionRef(ctx, &config.ConfigRef{
+			Kind: config.Kind_collection,
+			Id:   cid,
+		})
+	}
+	return
 }

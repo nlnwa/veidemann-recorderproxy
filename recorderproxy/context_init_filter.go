@@ -47,10 +47,7 @@ func (f *ContextInitFilter) Apply(ctx filters.Context, req *http.Request, next f
 		req = req.WithContext(ctx)
 
 		context2.SetUri(ctx, uri)
-		jid, eid, cid := context2.RegisterConnectRequest(ctx, f.conn, f.proxyId, uri)
-		context2.SetJobExecutionId(ctx, jid)
-		context2.SetCrawlExecutionId(ctx, eid)
-		context2.SetCollectionRef(ctx, cid)
+		context2.RegisterConnectRequest(ctx, f.conn, f.proxyId, req, uri)
 
 		l.Debugf("Converted CONNECT request uri form %v to %v", req.URL, uri)
 		resp, context, err = next(ctx, req)
