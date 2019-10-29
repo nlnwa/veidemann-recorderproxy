@@ -19,6 +19,7 @@ package context
 import (
 	"context"
 	"github.com/getlantern/proxy/filters"
+	"github.com/nlnwa/veidemann-api-go/config/v1"
 	"github.com/nlnwa/veidemann-recorderproxy/logger"
 	"net/url"
 	"sync"
@@ -30,8 +31,13 @@ const (
 	ctxKeyRecorderProxyAware = ctxKey("recorderProxyAware")
 	ctxKeyRCTX               = ctxKey("recordContext")
 	ctxKeyHost               = ctxKey("host")
+	ctxKeyPort               = ctxKey("port")
 	ctxKeyUrl                = ctxKey("url")
 	ctxKeyConnectErr         = ctxKey("connectErr")
+	ctxKeyCrawlExecutionId   = ctxKey("eid")
+	ctxKeyJobExecutionId     = ctxKey("jid")
+	ctxKeyCollectionRef      = ctxKey("cid")
+	ctxKeyIp                 = ctxKey("ip")
 )
 
 var dataAwareMutex sync.RWMutex
@@ -59,6 +65,10 @@ func SetHost(ctx context.Context, host string) {
 	setValue(ctx, ctxKeyHost, host)
 }
 
+func SetPort(ctx context.Context, port string) {
+	setValue(ctx, ctxKeyPort, port)
+}
+
 func SetUri(ctx context.Context, uri *url.URL) {
 	setValue(ctx, ctxKeyUrl, uri)
 }
@@ -81,8 +91,29 @@ func SetConnectErrorIfNotExists(ctx context.Context, err error) {
 	}
 }
 
+func SetCrawlExecutionId(ctx context.Context, eid string) {
+	setValue(ctx, ctxKeyCrawlExecutionId, eid)
+}
+
+func SetJobExecutionId(ctx context.Context, jid string) {
+	setValue(ctx, ctxKeyJobExecutionId, jid)
+}
+
+func SetCollectionRef(ctx context.Context, cid *config.ConfigRef) {
+	setValue(ctx, ctxKeyCollectionRef, cid)
+}
+
+func SetIp(ctx context.Context, ip string) {
+	setValue(ctx, ctxKeyIp, ip)
+}
+
 func GetHost(ctx context.Context) (host string) {
 	host, _ = getValue(ctx, ctxKeyHost).(string)
+	return
+}
+
+func GetPort(ctx context.Context) (port string) {
+	port, _ = getValue(ctx, ctxKeyPort).(string)
 	return
 }
 
@@ -98,6 +129,26 @@ func GetRecordContext(ctx context.Context) (recordContext *RecordContext) {
 
 func GetConnectError(ctx context.Context) (err error) {
 	err, _ = getValue(ctx, ctxKeyConnectErr).(error)
+	return
+}
+
+func GetCrawlExecutionId(ctx context.Context) (eid string) {
+	eid, _ = getValue(ctx, ctxKeyCrawlExecutionId).(string)
+	return
+}
+
+func GetJobExecutionId(ctx context.Context) (jid string) {
+	jid, _ = getValue(ctx, ctxKeyJobExecutionId).(string)
+	return
+}
+
+func GetCollectionRef(ctx context.Context) (cid *config.ConfigRef) {
+	cid, _ = getValue(ctx, ctxKeyCollectionRef).(*config.ConfigRef)
+	return
+}
+
+func GetIp(ctx context.Context) (ip string) {
+	ip, _ = getValue(ctx, ctxKeyIp).(string)
 	return
 }
 

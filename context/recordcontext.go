@@ -25,7 +25,6 @@ import (
 	"github.com/nlnwa/veidemann-recorderproxy/constants"
 	"github.com/nlnwa/veidemann-recorderproxy/logger"
 	"github.com/nlnwa/veidemann-recorderproxy/serviceconnections"
-	"github.com/opentracing/opentracing-go"
 	log "github.com/sirupsen/logrus"
 	"net/http"
 	"net/url"
@@ -55,12 +54,9 @@ type RecordContext struct {
 	ctx               context.Context
 	cwc               *CwcSession
 	bcc               *BccSession
+	Method            string
 	Uri               *url.URL
-	IP                string
 	FetchTimesTamp    time.Time
-	CrawlExecutionId  string
-	JobExecutionId    string
-	CollectionRef     *config.ConfigRef
 	Meta              *contentwriter.WriteRequest_Meta
 	CrawlLog          *frontier.CrawlLog
 	ReplacementScript *config.BrowserScript
@@ -84,21 +80,13 @@ func NewRecordContext() *RecordContext {
 }
 
 func (rc *RecordContext) Init(proxyId int32, conn *serviceconnections.Connections, req *http.Request, uri *url.URL) *RecordContext {
-	span := opentracing.SpanFromContext(req.Context())
 	rc.conn = conn
 	rc.ctx = req.Context()
 	rc.ProxyId = proxyId
-	rc.CrawlExecutionId = req.Header.Get(constants.HeaderCrawlExecutionId)
-	rc.JobExecutionId = req.Header.Get(constants.HeaderJobExecutionId)
+	rc.Method = req.Method
 	rc.Uri = uri
 
-	if req.Header.Get(constants.HeaderCollectionId) != "" {
-		rc.CollectionRef = &config.ConfigRef{
-			Kind: config.Kind_collection,
-			Id:   req.Header.Get(constants.HeaderCollectionId),
-		}
-		span.LogKV("event", "CollectionIdFromHeader", "CollectionId", rc.CollectionRef.Id)
-	}
+	resolveIdsFromHttpHeader(rc.ctx, req)
 
 	req.Header.Del(constants.HeaderCrawlExecutionId)
 	req.Header.Del(constants.HeaderJobExecutionId)
@@ -108,10 +96,12 @@ func (rc *RecordContext) Init(proxyId int32, conn *serviceconnections.Connection
 	fetchTimeStamp, _ := ptypes.TimestampProto(rc.FetchTimesTamp)
 
 	rc.CrawlLog = &frontier.CrawlLog{
-		JobExecutionId: rc.JobExecutionId,
-		ExecutionId:    rc.CrawlExecutionId,
+		JobExecutionId: GetJobExecutionId(rc.ctx),
+		ExecutionId:    GetCrawlExecutionId(rc.ctx),
 		FetchTimeStamp: fetchTimeStamp,
 		RequestedUri:   uri.String(),
+		Method:         rc.Method,
+		IpAddress:      GetIp(rc.ctx),
 	}
 
 	rc.InitDone = true
@@ -161,4 +151,20 @@ func LogWithContextAndRequest(ctx context.Context, req *http.Request, componentN
 	}
 	l = l.WithField("component", componentName)
 	return l
+}
+
+func resolveIdsFromHttpHeader(ctx context.Context, req *http.Request) {
+	jid := req.Header.Get(constants.HeaderJobExecutionId)
+	eid := req.Header.Get(constants.HeaderCrawlExecutionId)
+	SetJobExecutionId(ctx, jid)
+	SetCrawlExecutionId(ctx, eid)
+
+	if req.Header.Get(constants.HeaderCollectionId) != "" {
+		cid := req.Header.Get(constants.HeaderCollectionId)
+		SetCollectionRef(ctx, &config.ConfigRef{
+			Kind: config.Kind_collection,
+			Id:   cid,
+		})
+	}
+	return
 }

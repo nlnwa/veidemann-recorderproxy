@@ -25,12 +25,14 @@ import (
 	"github.com/nlnwa/veidemann-api-go/frontier/v1"
 	"github.com/nlnwa/veidemann-recorderproxy/constants"
 	"github.com/nlnwa/veidemann-recorderproxy/errors"
+	"github.com/nlnwa/veidemann-recorderproxy/serviceconnections"
 	"github.com/opentracing/opentracing-go"
 	otLog "github.com/opentracing/opentracing-go/log"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -268,7 +270,7 @@ func (rc *RecordContext) saveCrawlLogUnlocked(b *BccSession, cl *frontier.CrawlL
 
 	fetchDurationMs := time.Now().Sub(rc.FetchTimesTamp).Nanoseconds() / 1000000
 	cl.FetchTimeMs = fetchDurationMs
-	cl.IpAddress = rc.IP
+	cl.IpAddress = GetIp(rc.ctx)
 
 	err = b.BrowserController_DoClient.Send(&browsercontroller.DoRequest{
 		Action: &browsercontroller.DoRequest_Completed{
@@ -385,10 +387,11 @@ func (rc *RecordContext) RegisterNewRequest(ctx filters.Context) error {
 		Action: &browsercontroller.DoRequest_New{
 			New: &browsercontroller.RegisterNew{
 				ProxyId:          rc.ProxyId,
+				Method:           rc.Method,
 				Uri:              rc.Uri.String(),
-				CrawlExecutionId: rc.CrawlExecutionId,
-				JobExecutionId:   rc.JobExecutionId,
-				CollectionRef:    rc.CollectionRef,
+				CrawlExecutionId: GetCrawlExecutionId(rc.ctx),
+				JobExecutionId:   GetJobExecutionId(rc.ctx),
+				CollectionRef:    GetCollectionRef(rc.ctx),
 			},
 		},
 	}
@@ -397,11 +400,11 @@ func (rc *RecordContext) RegisterNewRequest(ctx filters.Context) error {
 		otLog.String("event", "Send BrowserController New request"),
 		otLog.Int32("ProxyId", rc.ProxyId),
 		otLog.String("Uri", rc.Uri.String()),
-		otLog.String("CrawlExecutionId", rc.CrawlExecutionId),
-		otLog.String("JobExecutionId", rc.JobExecutionId),
+		otLog.String("CrawlExecutionId", GetCrawlExecutionId(rc.ctx)),
+		otLog.String("JobExecutionId", GetJobExecutionId(rc.ctx)),
 	}
-	if rc.CollectionRef != nil {
-		lf = append(lf, otLog.String("CollectionId", rc.CollectionRef.Id))
+	if GetCollectionRef(rc.ctx) != nil {
+		lf = append(lf, otLog.String("CollectionId", GetCollectionRef(rc.ctx).Id))
 	} else {
 		lf = append(lf, otLog.String("CollectionId", ""))
 	}
@@ -429,13 +432,13 @@ func (rc *RecordContext) RegisterNewRequest(ctx filters.Context) error {
 			"CollectionId", v.New.CollectionRef.Id,
 			"ReplacementScript", v.New.ReplacementScript,
 		)
-		rc.CrawlExecutionId = v.New.CrawlExecutionId
-		rc.JobExecutionId = v.New.GetJobExecutionId()
-		rc.CollectionRef = v.New.CollectionRef
+		SetJobExecutionId(rc.ctx, v.New.JobExecutionId)
+		SetCrawlExecutionId(rc.ctx, v.New.CrawlExecutionId)
+		SetCollectionRef(rc.ctx, v.New.CollectionRef)
 		rc.ReplacementScript = v.New.ReplacementScript
 
-		rc.CrawlLog.JobExecutionId = rc.JobExecutionId
-		rc.CrawlLog.ExecutionId = rc.CrawlExecutionId
+		rc.CrawlLog.JobExecutionId = GetJobExecutionId(rc.ctx)
+		rc.CrawlLog.ExecutionId = GetCrawlExecutionId(rc.ctx)
 	}
 
 	return nil
@@ -479,4 +482,55 @@ func (rc *RecordContext) notifyDataReceived(activity browsercontroller.NotifyAct
 		b.span.LogFields(otLog.String("event", "Notify data received"))
 	}
 	return err
+}
+
+func RegisterConnectRequest(ctx filters.Context, conn *serviceconnections.Connections, proxyId int32, req *http.Request, uri *url.URL) {
+	l := LogWithContext(ctx, "PROXY:BCC")
+
+	resolveIdsFromHttpHeader(ctx, req)
+
+	bccRequest := &browsercontroller.DoRequest{
+		Action: &browsercontroller.DoRequest_New{
+			New: &browsercontroller.RegisterNew{
+				ProxyId:          proxyId,
+				Method:           "CONNECT",
+				Uri:              uri.String(),
+				CrawlExecutionId: GetCrawlExecutionId(ctx),
+				JobExecutionId:   GetJobExecutionId(ctx),
+				CollectionRef:    GetCollectionRef(ctx),
+			},
+		},
+	}
+
+	bccCtx, cancel := context.WithCancel(context.Background())
+	bcc, err := conn.BrowserControllerClient().Do(bccCtx)
+	if err != nil {
+		l.WithError(err).Warn("Error connecting to browser controller")
+		err = errors.WrapInternalError(err, errors.RuntimeException, "Error connecting to browser controller", err.Error())
+		cancel()
+		return
+	}
+
+	err = bcc.Send(bccRequest)
+	if err != nil {
+		l.WithError(err).Info("Error register with browser controller")
+		err = errors.WrapInternalError(err, errors.RuntimeException, "Error register with browser controller", err.Error())
+	}
+	doReply, err := bcc.Recv()
+
+	switch v := doReply.Action.(type) {
+	case *browsercontroller.DoReply_New:
+		SetJobExecutionId(ctx, v.New.JobExecutionId)
+		SetCrawlExecutionId(ctx, v.New.CrawlExecutionId)
+		SetCollectionRef(ctx, v.New.CollectionRef)
+	}
+
+	_ = bcc.CloseSend()
+	for {
+		_, e := bcc.Recv()
+		if e != nil {
+			break
+		}
+	}
+	cancel()
 }

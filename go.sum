@@ -109,8 +109,8 @@ github.com/mitchellh/mapstructure v1.1.2 h1:fmNYVwqnSfB9mZU6OS2O6GsXM+wcskZDuKQz
 github.com/mitchellh/mapstructure v1.1.2/go.mod h1:FVVH3fgwuzCH5S8UJGiWEs2h04kUh9fWfEaFds41c1Y=
 github.com/nlnwa/getlantern-proxy v0.0.0-20191010083338-hooks h1:IPbBvGRfalycQVXCw4aZwfyrj6c9BNEsrARfW1TJP88=
 github.com/nlnwa/getlantern-proxy v0.0.0-20191010083338-hooks/go.mod h1:+6JYU3ZnFg8rw9rjInY4TBKeFjbIsat0J+DGPTcPdaQ=
-github.com/nlnwa/veidemann-api-go v1.0.0-beta10 h1:WDqkeHOG+rjUixLxLIqNPeVTgoYM1bng2LPdUetIRpg=
-github.com/nlnwa/veidemann-api-go v1.0.0-beta10/go.mod h1:YSqujx23hZDAKNTXweMtHX6rnH1Q3WDkpSVw5NgQd3c=
+github.com/nlnwa/veidemann-api-go v1.0.0-beta11 h1:FZmZTLo2s5qmexi/KU/lertShPipS7m+GIN6wGIZEKw=
+github.com/nlnwa/veidemann-api-go v1.0.0-beta11/go.mod h1:YSqujx23hZDAKNTXweMtHX6rnH1Q3WDkpSVw5NgQd3c=
 github.com/opentracing-contrib/go-stdlib v0.0.0-20190519235532-cf7a6c988dc9 h1:QsgXACQhd9QJhEmRumbsMQQvBtmdS0mafoVEBplWXEg=
 github.com/opentracing-contrib/go-stdlib v0.0.0-20190519235532-cf7a6c988dc9/go.mod h1:PLldrQSroqzH70Xl+1DQcGnefIbqsKR7UDaiux3zV+w=
 github.com/opentracing/opentracing-go v1.1.0 h1:pWlfV3Bxv7k65HYwkikxat0+s3pV4bsqf19k25Ur8rU=

@@ -37,20 +37,24 @@ func (f *ContextInitFilter) Apply(ctx filters.Context, req *http.Request, next f
 	if req.Method == http.MethodConnect {
 		// Handle HTTPS CONNECT
 		context2.SetHost(ctx, req.URL.Hostname())
+		context2.SetPort(ctx, req.URL.Port())
 
 		// Copy URI by value and add scheme
 		uv := *req.URL
 		uri := &uv
 		uri.Scheme = "https"
 
-		context2.SetUri(ctx, uri)
 		req = req.WithContext(ctx)
+
+		context2.SetUri(ctx, uri)
+		context2.RegisterConnectRequest(ctx, f.conn, f.proxyId, req, uri)
 
 		l.Debugf("Converted CONNECT request uri form %v to %v", req.URL, uri)
 		resp, context, err = next(ctx, req)
 	} else {
 		if context2.GetHost(ctx) == "" {
 			context2.SetHost(ctx, req.URL.Hostname())
+			context2.SetPort(ctx, req.URL.Port())
 		}
 
 		uri := context2.GetUri(ctx)
@@ -62,9 +66,9 @@ func (f *ContextInitFilter) Apply(ctx filters.Context, req *http.Request, next f
 
 		l.Debugf("Converted GET request uri form %v to %v", req.URL, uri)
 
+		req = req.WithContext(ctx)
 		rc := context2.NewRecordContext()
 		context2.SetRecordContext(ctx, rc)
-		req = req.WithContext(ctx)
 		span := opentracing.SpanFromContext(ctx)
 		span.LogFields(log.String("event", "Start init record context"))
 		rc.Init(f.proxyId, f.conn, req, uri)

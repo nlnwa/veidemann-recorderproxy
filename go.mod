@@ -12,7 +12,7 @@ require (
 	github.com/golang/protobuf v1.3.2
 	github.com/grpc-ecosystem/go-grpc-middleware v1.1.0
 	github.com/grpc-ecosystem/grpc-gateway v1.9.2 // indirect
-	github.com/nlnwa/veidemann-api-go v1.0.0-beta10
+	github.com/nlnwa/veidemann-api-go v1.0.0-beta11
 	github.com/opentracing-contrib/go-stdlib v0.0.0-20190519235532-cf7a6c988dc9
 	github.com/opentracing/opentracing-go v1.1.0
 	github.com/pkg/errors v0.8.1

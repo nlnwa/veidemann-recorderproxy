@@ -99,16 +99,16 @@ func (f *RecorderFilter) filterRequest(c filters.Context, span opentracing.Span,
 	uri := rc.Uri
 
 	req.Header.Set(constants.HeaderAcceptEncoding, "identity")
-	req.Header.Set(constants.HeaderCrawlExecutionId, rc.CrawlExecutionId)
-	req.Header.Set(constants.HeaderJobExecutionId, rc.JobExecutionId)
+	req.Header.Set(constants.HeaderCrawlExecutionId, context2.GetCrawlExecutionId(c))
+	req.Header.Set(constants.HeaderJobExecutionId, context2.GetJobExecutionId(c))
 
 	rc.Meta = &contentwriter.WriteRequest_Meta{
 		Meta: &contentwriter.WriteRequestMeta{
 			RecordMeta:     map[int32]*contentwriter.WriteRequestMeta_RecordMeta{},
 			TargetUri:      uri.String(),
-			ExecutionId:    rc.CrawlExecutionId,
-			IpAddress:      rc.IP,
-			CollectionRef:  rc.CollectionRef,
+			ExecutionId:    context2.GetCrawlExecutionId(c),
+			IpAddress:      context2.GetIp(c),
+			CollectionRef:  context2.GetCollectionRef(c),
 			FetchTimeStamp: fetchTimeStamp,
 		},
 	}
