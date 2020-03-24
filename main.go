@@ -75,13 +75,29 @@ func main() {
 	timeout := viper.GetDuration("timeout")
 	cacheAddr := viper.GetString("cache-host") + ":" + viper.GetString("cache-port")
 
-	conn := serviceconnections.NewConnections()
-	defer conn.Close()
-	err = conn.Connect(viper.GetString("content-writer-host"), viper.GetString("content-writer-port"),
-		viper.GetString("dns-resolver-host"), viper.GetString("dns-resolver-port"),
-		viper.GetString("browser-controller-host"), viper.GetString("browser-controller-port"),
-		timeout)
+	contentWriterOpts := serviceconnections.NewConnectionOptions(
+		"ContentWriter",
+		serviceconnections.WithConnectTimeout(timeout),
+		serviceconnections.WithHost(viper.GetString("content-writer-host")),
+		serviceconnections.WithPort(viper.GetString("content-writer-port")),
+	)
+	dnsOpts := serviceconnections.NewConnectionOptions(
+		"DnsService",
+		serviceconnections.WithConnectTimeout(timeout),
+		serviceconnections.WithHost(viper.GetString("dns-resolver-host")),
+		serviceconnections.WithPort(viper.GetString("dns-resolver-port")),
+	)
+	browserControllerOpts := serviceconnections.NewConnectionOptions(
+		"BrowserController",
+		serviceconnections.WithConnectTimeout(timeout),
+		serviceconnections.WithHost(viper.GetString("browser-controller-host")),
+		serviceconnections.WithPort(viper.GetString("browser-controller-port")),
+	)
 
+	conn := serviceconnections.NewConnections(contentWriterOpts, dnsOpts, browserControllerOpts)
+	defer conn.Close()
+
+	err = conn.Connect()
 	if err != nil {
 		log.Fatalf("Could not connect to services: %v", err)
 	}

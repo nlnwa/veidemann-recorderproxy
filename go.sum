@@ -107,6 +107,8 @@ github.com/mitchellh/go-server-timing v1.0.0 h1:cdHk4f7lxjwbRqTSGZFw8PCeoNYXGp4T
 github.com/mitchellh/go-server-timing v1.0.0/go.mod h1:RdipKQzCJaL4HyxFQBINbf4XoDdZKkSshqw9Bbsx1ic=
 github.com/mitchellh/mapstructure v1.1.2 h1:fmNYVwqnSfB9mZU6OS2O6GsXM+wcskZDuKQzvN1EDeE=
 github.com/mitchellh/mapstructure v1.1.2/go.mod h1:FVVH3fgwuzCH5S8UJGiWEs2h04kUh9fWfEaFds41c1Y=
+github.com/nlnwa/getlantern-proxy v0.0.0-20191010083338-f1d9ae81a7b4 h1:SBZH9kTq5ugtXeTHgn94VOBJqAjVr4XhS6gp7ZifkCU=
+github.com/nlnwa/getlantern-proxy v0.0.0-20191010083338-f1d9ae81a7b4/go.mod h1:+6JYU3ZnFg8rw9rjInY4TBKeFjbIsat0J+DGPTcPdaQ=
 github.com/nlnwa/getlantern-proxy v0.0.0-20191010083338-hooks h1:IPbBvGRfalycQVXCw4aZwfyrj6c9BNEsrARfW1TJP88=
 github.com/nlnwa/getlantern-proxy v0.0.0-20191010083338-hooks/go.mod h1:+6JYU3ZnFg8rw9rjInY4TBKeFjbIsat0J+DGPTcPdaQ=
 github.com/nlnwa/veidemann-api-go v1.0.0-beta11 h1:FZmZTLo2s5qmexi/KU/lertShPipS7m+GIN6wGIZEKw=

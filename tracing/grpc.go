@@ -23,6 +23,7 @@ import (
 	context2 "github.com/nlnwa/veidemann-recorderproxy/context"
 	"github.com/opentracing/opentracing-go"
 	"github.com/sirupsen/logrus"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/stats"
 )
 
@@ -30,9 +31,13 @@ type sh struct {
 	service string
 }
 
-// NewStatsHandler creates a stats.Handler for gRPC which logs all traffic
-func NewStatsHandler(serviceName string) stats.Handler {
-	return &sh{"gRPC:" + serviceName}
+// NewStatsHandler creates a stats.Handler for gRPC which logs all traffic if loglevel is equal or finer than the submitted loglevel
+func NewStatsHandler(serviceName string, loglevel logrus.Level) grpc.DialOption {
+	if logrus.IsLevelEnabled(loglevel) {
+		return grpc.WithStatsHandler(&sh{"gRPC:" + serviceName})
+	} else {
+		return grpc.EmptyDialOption{}
+	}
 }
 
 func (h *sh) TagRPC(c context.Context, i *stats.RPCTagInfo) context.Context {

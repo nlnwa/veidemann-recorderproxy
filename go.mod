@@ -1,5 +1,7 @@
 module github.com/nlnwa/veidemann-recorderproxy
 
+go 1.13
+
 require (
 	github.com/codahale/hdrhistogram v0.0.0-20161010025455-3a0bb77429bd // indirect
 	github.com/felixge/httpsnoop v1.0.1 // indirect
@@ -27,4 +29,4 @@ require (
 	google.golang.org/grpc v1.23.1
 )
 
-replace github.com/getlantern/proxy => github.com/nlnwa/getlantern-proxy v0.0.0-20191010083338-hooks
+replace github.com/getlantern/proxy => github.com/nlnwa/getlantern-proxy v0.0.0-20191010083338-f1d9ae81a7b4

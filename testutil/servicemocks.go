@@ -30,13 +30,13 @@ import (
 	"github.com/nlnwa/veidemann-recorderproxy/logger"
 	"github.com/nlnwa/veidemann-recorderproxy/serviceconnections"
 	"github.com/nlnwa/veidemann-recorderproxy/tracing"
+	log "github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 	"hash"
 	"io"
-	"log"
 	"net"
 	"os"
 	"strconv"
@@ -51,14 +51,56 @@ const bufSize = 1024 * 1024
  * Server mocks
  */
 type GrpcServiceMock struct {
-	lis           *bufconn.Listener
-	l             *sync.Mutex
-	Requests      *Requests
-	DoneBC        chan bool
-	DoneCW        chan bool
-	contextDialer grpc.DialOption
-	Server        *grpc.Server
-	ClientConn    *serviceconnections.Connections
+	dnsOpts               *serviceconnections.ConnectionOptions
+	contentWriterOpts     *serviceconnections.ConnectionOptions
+	browserControllerOpts *serviceconnections.ConnectionOptions
+	lis                   *bufconn.Listener
+	l                     *sync.Mutex
+	Requests              *Requests
+	DoneBC                chan bool
+	DoneCW                chan bool
+	contextDialer         grpc.DialOption
+	Server                *grpc.Server
+	ClientConn            *serviceconnections.Connections
+}
+
+// ConnectionOption configures how we parse a URL.
+type MockOption interface {
+	apply(*GrpcServiceMock)
+}
+
+// funcMockOption wraps a function that modifies GrpcServiceMock into an
+// implementation of the MockOption interface.
+type funcMockOption struct {
+	f func(*GrpcServiceMock)
+}
+
+func (fmo *funcMockOption) apply(mock *GrpcServiceMock) {
+	fmo.f(mock)
+}
+
+func newFuncMockOption(f func(*GrpcServiceMock)) *funcMockOption {
+	return &funcMockOption{
+		f: f,
+	}
+}
+
+func WithExternalBrowserController(option *serviceconnections.ConnectionOptions) MockOption {
+	return newFuncMockOption(func(c *GrpcServiceMock) {
+		c.browserControllerOpts = option
+	})
+}
+
+func WithExternalContentWriter(option *serviceconnections.ConnectionOptions) MockOption {
+	return newFuncMockOption(func(c *GrpcServiceMock) {
+		c.contentWriterOpts = option
+	})
+}
+
+func WithExternalDns(option *serviceconnections.ConnectionOptions) MockOption {
+	return newFuncMockOption(func(c *GrpcServiceMock) {
+		c.dnsOpts = option
+	})
 }
 
 type Requests struct {
@@ -67,13 +109,17 @@ type Requests struct {
 	ContentWriterRequests     []*contentwriterV1.WriteRequest
 }
 
-func NewGrpcServiceMock() *GrpcServiceMock {
+func NewGrpcServiceMock(opts ...MockOption) *GrpcServiceMock {
 	tracer, _ := tracing.Init("Service Mocks")
 
 	m := &GrpcServiceMock{
 		lis:      bufconn.Listen(bufSize),
 		l:        &sync.Mutex{},
 		Requests: &Requests{},
+	}
+
+	for _, opt := range opts {
+		opt.apply(m)
 	}
 
 	m.contextDialer = grpc.WithContextDialer(m.bufDialer)
@@ -89,19 +135,48 @@ func NewGrpcServiceMock() *GrpcServiceMock {
 		)),
 	)
 
-	dnsresolverV1.RegisterDnsResolverServer(m.Server, m)
-	contentwriterV1.RegisterContentWriterServer(m.Server, m)
-	browsercontrollerV1.RegisterBrowserControllerServer(m.Server, m)
+	if m.dnsOpts == nil {
+		dnsresolverV1.RegisterDnsResolverServer(m.Server, m)
+	}
+	if m.contentWriterOpts == nil {
+		contentwriterV1.RegisterContentWriterServer(m.Server, m)
+	}
+	if m.browserControllerOpts == nil {
+		browsercontrollerV1.RegisterBrowserControllerServer(m.Server, m)
+	}
 	go func() {
 		if err := m.Server.Serve(m.lis); err != nil {
 			log.Fatalf("Server exited with error: %v", err)
 		}
 	}()
 
-	m.ClientConn = serviceconnections.NewConnections()
-	m.ClientConn.StatsHandlerFactory = tracing.NewStatsHandler
+	dialOption := grpc.WithContextDialer(m.bufDialer)
 
-	err := m.ClientConn.Connect("", "", "", "", "", "", 1*time.Minute, grpc.WithContextDialer(m.bufDialer))
+	if m.contentWriterOpts == nil {
+		m.contentWriterOpts = serviceconnections.NewConnectionOptions(
+			"ContentWriter",
+			serviceconnections.WithConnectTimeout(1*time.Minute),
+			serviceconnections.WithDialOptions(dialOption, tracing.NewStatsHandler("ContentWriter", log.DebugLevel)),
+		)
+	}
+	if m.dnsOpts == nil {
+		m.dnsOpts = serviceconnections.NewConnectionOptions(
+			"DnsService",
+			serviceconnections.WithConnectTimeout(1*time.Minute),
+			serviceconnections.WithDialOptions(dialOption, tracing.NewStatsHandler("DnsService", log.DebugLevel)),
+		)
+	}
+	if m.browserControllerOpts == nil {
+		m.browserControllerOpts = serviceconnections.NewConnectionOptions(
+			"BrowserController",
+			serviceconnections.WithConnectTimeout(1*time.Minute),
+			serviceconnections.WithDialOptions(dialOption, tracing.NewStatsHandler("BrowserController", log.DebugLevel)),
+		)
+	}
+
+	m.ClientConn = serviceconnections.NewConnections(m.contentWriterOpts, m.dnsOpts, m.browserControllerOpts)
+
+	err := m.ClientConn.Connect()
 	if err != nil {
 		log.Panicf("Could not connect to services: %v", err)
 	}
