@@ -19,6 +19,7 @@ package constants
 // Http headers
 const (
 	HeaderAcceptEncoding   = "Accept-Encoding"
+	HeaderRequestId        = "veidemann_reqid"
 	HeaderCrawlExecutionId = "veidemann_eid"
 	HeaderJobExecutionId   = "veidemann_jeid"
 	HeaderCollectionId     = "veidemann_cid"

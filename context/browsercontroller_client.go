@@ -389,6 +389,7 @@ func (rc *RecordContext) RegisterNewRequest(ctx filters.Context) error {
 				ProxyId:          rc.ProxyId,
 				Method:           rc.Method,
 				Uri:              rc.Uri.String(),
+				RequestId:        GetRequestId(rc.ctx),
 				CrawlExecutionId: GetCrawlExecutionId(rc.ctx),
 				JobExecutionId:   GetJobExecutionId(rc.ctx),
 				CollectionRef:    GetCollectionRef(rc.ctx),
@@ -400,6 +401,7 @@ func (rc *RecordContext) RegisterNewRequest(ctx filters.Context) error {
 		otLog.String("event", "Send BrowserController New request"),
 		otLog.Int32("ProxyId", rc.ProxyId),
 		otLog.String("Uri", rc.Uri.String()),
+		otLog.String("RequestId", GetRequestId(rc.ctx)),
 		otLog.String("CrawlExecutionId", GetCrawlExecutionId(rc.ctx)),
 		otLog.String("JobExecutionId", GetJobExecutionId(rc.ctx)),
 	}
@@ -495,6 +497,7 @@ func RegisterConnectRequest(ctx filters.Context, conn *serviceconnections.Connec
 				ProxyId:          proxyId,
 				Method:           "CONNECT",
 				Uri:              uri.String(),
+				RequestId:        GetRequestId(ctx),
 				CrawlExecutionId: GetCrawlExecutionId(ctx),
 				JobExecutionId:   GetJobExecutionId(ctx),
 				CollectionRef:    GetCollectionRef(ctx),

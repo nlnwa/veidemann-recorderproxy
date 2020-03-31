@@ -33,6 +33,7 @@ import (
 	"github.com/nlnwa/veidemann-recorderproxy/recorderproxy"
 	"github.com/nlnwa/veidemann-recorderproxy/serviceconnections"
 	"github.com/nlnwa/veidemann-recorderproxy/testutil"
+	"google.golang.org/protobuf/proto"
 	"io/ioutil"
 	"net/http"
 	"net/url"
@@ -1300,7 +1301,7 @@ func compareCW(t *testing.T, serviceName string, tt test, want []*contentwriterV
 				return
 			}
 			lastGot := got[len(got)-1].Value
-			if requestsEqual(lastGot, lastWant) {
+			if reflect.DeepEqual(lastGot, lastWant) {
 				return
 			} else {
 				t.Errorf("%s service got wrong cwcCancelFunc request.  %s request #%d\nWas:\n%v\nWant:\n%v", serviceName, serviceName,
@@ -1336,7 +1337,7 @@ func compareBC(t *testing.T, serviceName string, tt test, want []*browsercontrol
 				t.Errorf("Got wrong %s request. %s request #%d\nWas:\n%v\nWant:\n%v", serviceName, serviceName,
 					i+1, printRequest(got[i]), printRequest(want[i]))
 				t.Errorf("Got wrong %v\n",
-					reflect.DeepEqual(got[i].GetCompleted().GetCrawlLog(), want[i].GetCompleted().GetCrawlLog()))
+					proto.Equal(got[i].GetCompleted().GetCrawlLog(), want[i].GetCompleted().GetCrawlLog()))
 				if diff := deep.Equal(got[i], want[i]); diff != nil {
 					t.Error(diff)
 				}
@@ -1366,7 +1367,7 @@ func compareDNS(t *testing.T, serviceName string, tt test, want []*dnsresolverV1
 			t.Errorf("%s service received too few requests. Got %d, want %d.\nFirst missing request is:\n%v", serviceName,
 				len(got), len(want), printRequest(want[len(got)]))
 		} else {
-			if !requestsEqual(got[i], r) {
+			if !proto.Equal(got[i], r) {
 				t.Errorf("Got wrong %s request. %s request #%d\nWas:\n%v\nWant:\n%v", serviceName, serviceName,
 					i+1, printRequest(got[i]), printRequest(want[i]))
 			}
@@ -1407,7 +1408,7 @@ func compareCwWriteRequest(t *testing.T, want *contentwriterV1.WriteRequest, got
 					wantDateM := dateRe.FindSubmatch(wantBytes)
 					gotBytes = []byte(fmt.Sprintf("%s%s%s", gotDateM[1], wantDateM[2], gotDateM[3]))
 					got.Value.(*contentwriterV1.WriteRequest_ProtocolHeader).ProtocolHeader.Data = gotBytes
-					if reflect.DeepEqual(want, got) {
+					if proto.Equal(want, got) {
 						ok = true
 					} else {
 						ok = false
@@ -1433,7 +1434,7 @@ func compareCwWriteRequest(t *testing.T, want *contentwriterV1.WriteRequest, got
 				r.BlockDigest = ""
 			}
 
-			if reflect.DeepEqual(want, got) {
+			if proto.Equal(want, got) {
 				ok = true
 			} else {
 				ok = false
@@ -1441,7 +1442,7 @@ func compareCwWriteRequest(t *testing.T, want *contentwriterV1.WriteRequest, got
 		}
 	default:
 		ok = true
-		if !requestsEqual(got, want) {
+		if !proto.Equal(got, want) {
 			ok = false
 		}
 	}
@@ -1467,7 +1468,7 @@ func compareBcDoRequest(t *testing.T, tt test, want *browsercontrollerV1.DoReque
 			gt.Completed.GetCrawlLog().BlockDigest = ""
 
 			gt.Completed.CrawlLog.FetchTimeMs = 0
-			if reflect.DeepEqual(want, got) {
+			if proto.Equal(want, got) {
 				ok = true
 			} else {
 				ok = false
@@ -1475,7 +1476,7 @@ func compareBcDoRequest(t *testing.T, tt test, want *browsercontrollerV1.DoReque
 		}
 	default:
 		ok = true
-		if !requestsEqual(got, want) {
+		if !proto.Equal(got, want) {
 			ok = false
 		}
 	}
@@ -1523,13 +1524,6 @@ func get(uri string, client *http.Client, timeout time.Duration) (int, []byte, e
 		return 0, nil, err
 	}
 	return resp.StatusCode, txt, nil
-}
-
-func requestsEqual(got, want interface{}) bool {
-	if !reflect.DeepEqual(got, want) {
-		return false
-	}
-	return true
 }
 
 func printRequest(req interface{}) string {
