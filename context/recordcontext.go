@@ -88,6 +88,7 @@ func (rc *RecordContext) Init(proxyId int32, conn *serviceconnections.Connection
 
 	resolveIdsFromHttpHeader(rc.ctx, req)
 
+	req.Header.Del(constants.HeaderRequestId)
 	req.Header.Del(constants.HeaderCrawlExecutionId)
 	req.Header.Del(constants.HeaderJobExecutionId)
 	req.Header.Del(constants.HeaderCollectionId)
@@ -156,8 +157,10 @@ func LogWithContextAndRequest(ctx context.Context, req *http.Request, componentN
 func resolveIdsFromHttpHeader(ctx context.Context, req *http.Request) {
 	jid := req.Header.Get(constants.HeaderJobExecutionId)
 	eid := req.Header.Get(constants.HeaderCrawlExecutionId)
+	reqid := req.Header.Get(constants.HeaderRequestId)
 	SetJobExecutionId(ctx, jid)
 	SetCrawlExecutionId(ctx, eid)
+	SetRequestId(ctx, reqid)
 
 	if req.Header.Get(constants.HeaderCollectionId) != "" {
 		cid := req.Header.Get(constants.HeaderCollectionId)

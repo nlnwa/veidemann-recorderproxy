@@ -23,97 +23,77 @@ import (
 	dnsresolverV1 "github.com/nlnwa/veidemann-api-go/dnsresolver/v1"
 	log "github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/stats"
-	"time"
 )
 
 // Connections holds the clients for external grpc services
 type Connections struct {
-	contentWriterHost           string
-	contentWriterPort           string
-	dnsResolverHost             string
-	dnsResolverPort             string
-	browserControllerHost       string
-	browserControllerPort       string
+	contentWriterOptions        *ConnectionOptions
+	dnsOptions                  *ConnectionOptions
+	browserControllerOptions    *ConnectionOptions
 	contentWriterClientConn     *grpc.ClientConn
 	contentWriterClient         contentwriterV1.ContentWriterClient
 	dnsResolverClientConn       *grpc.ClientConn
 	dnsResolverClient           dnsresolverV1.DnsResolverClient
 	browserControllerClientConn *grpc.ClientConn
 	browserControllerClient     browsercontrollerV1.BrowserControllerClient
-	StatsHandlerFactory         func(serviceName string) stats.Handler
 }
 
-func NewConnections() *Connections {
-	return &Connections{}
+func NewConnections(contentWriterOptions, dnsOptions, browserControllerOptions *ConnectionOptions) *Connections {
+	return &Connections{
+		contentWriterOptions:     contentWriterOptions,
+		dnsOptions:               dnsOptions,
+		browserControllerOptions: browserControllerOptions,
+	}
 }
 
-func (c *Connections) Connect(contentWriterHost, contentWriterPort, dnsResolverHost, dnsResolverPort, browserControllerHost, browserControllerPort string, connectTimeout time.Duration, opts ...grpc.DialOption) error {
-	c.contentWriterHost = contentWriterHost
-	c.contentWriterPort = contentWriterPort
-	contentWriterAddr := contentWriterHost + ":" + contentWriterPort
+func (c *Connections) Connect() error {
+	var err error
 
-	c.dnsResolverHost = dnsResolverHost
-	c.dnsResolverPort = dnsResolverPort
-	dnsResolverAddr := dnsResolverHost + ":" + dnsResolverPort
+	// Set up ContentWriterClient
+	c.contentWriterClientConn, err = c.contentWriterOptions.connectService()
+	if err != nil {
+		return err
+	}
+	c.contentWriterClient = contentwriterV1.NewContentWriterClient(c.contentWriterClientConn)
+	log.WithField("component", "gRPC:CWR").Printf("Connected to contentwriter")
 
-	c.browserControllerHost = browserControllerHost
-	c.browserControllerPort = browserControllerPort
-	browserControllerAddr := browserControllerHost + ":" + browserControllerPort
+	// Set up DnsResolverClient
+	c.dnsResolverClientConn, err = c.dnsOptions.connectService()
+	if err != nil {
+		return err
+	}
+	c.dnsResolverClient = dnsresolverV1.NewDnsResolverClient(c.dnsResolverClientConn)
+	log.WithField("component", "gRPC:DNS").Printf("Connected to dns resolver")
 
-	log.WithField("component", "PROXY").Printf("Proxy is using contentwriter at: %s, dns resolver at: %s and browser controller at: %s", contentWriterAddr, dnsResolverAddr, browserControllerAddr)
+	// Set up BrowserControllerClient
+	c.browserControllerClientConn, err = c.browserControllerOptions.connectService()
+	if err != nil {
+		return err
+	}
+	c.browserControllerClient = browsercontrollerV1.NewBrowserControllerClient(c.browserControllerClientConn)
+	log.WithField("component", "gRPC:CWR").Printf("Connected to browser controller")
 
-	opts = append(opts,
+	return nil
+}
+
+func (opts *ConnectionOptions) connectService() (*grpc.ClientConn, error) {
+	log.WithField("component", "PROXY").Printf("Connecting %s at: %s", opts.serviceName, opts.Addr())
+
+	dialOpts := append(opts.dialOptions,
 		grpc.WithInsecure(),
 		grpc.WithBlock(),
 		//grpc.WithStreamInterceptor(grpc_opentracing.StreamClientInterceptor()),
 		//grpc.WithUnaryInterceptor(grpc_opentracing.UnaryClientInterceptor()),
 	)
 
-	dialCtx, dialCancel := context.WithTimeout(context.Background(), connectTimeout)
+	dialCtx, dialCancel := context.WithTimeout(context.Background(), opts.connectTimeout)
 	defer dialCancel()
 
-	// Set up ContentWriterClient
-	clientConn, err := grpc.DialContext(dialCtx, contentWriterAddr, c.addStatsHandler("ContentWriter", opts)...)
+	clientConn, err := grpc.DialContext(dialCtx, opts.Addr(), dialOpts...)
 	if err != nil {
-		log.WithField("component", "gRPC:CWR").Errorf("fail to dial contentwriter at %v: %v", contentWriterAddr, err)
-		return err
+		log.WithField("component", "PROXY").Errorf("fail to dial %s: %v", opts.serviceName, err)
 	}
-	c.contentWriterClientConn = clientConn
-	c.contentWriterClient = contentwriterV1.NewContentWriterClient(clientConn)
-
-	log.WithField("component", "gRPC:CWR").Printf("Connected to contentwriter")
-
-	// Set up DnsResolverClient
-	clientConn, err = grpc.DialContext(dialCtx, dnsResolverAddr, c.addStatsHandler("DNSResolver", opts)...)
-	if err != nil {
-		log.WithField("component", "gRPC:DNS").Errorf("fail to dial dns resolver at %v: %v", dnsResolverAddr, err)
-		return err
-	}
-	c.dnsResolverClientConn = clientConn
-	c.dnsResolverClient = dnsresolverV1.NewDnsResolverClient(clientConn)
-
-	log.WithField("component", "gRPC:DNS").Printf("Connected to dns resolver")
-
-	// Set up BrowserControllerClient
-	clientConn, err = grpc.DialContext(dialCtx, browserControllerAddr, c.addStatsHandler("BrowserController", opts)...)
-	if err != nil {
-		log.WithField("component", "gRPC:BCR").Errorf("fail to dial browser controller at %v: %v", browserControllerAddr, err)
-		return err
-	}
-	c.browserControllerClientConn = clientConn
-	c.browserControllerClient = browsercontrollerV1.NewBrowserControllerClient(clientConn)
-
-	log.WithField("component", "gRPC:CWR").Printf("Connected to browser controller")
-
-	return nil
-}
-
-func (c *Connections) addStatsHandler(serviceName string, opts []grpc.DialOption) []grpc.DialOption {
-	if c.StatsHandlerFactory != nil && log.IsLevelEnabled(log.DebugLevel) {
-		return append(opts, grpc.WithStatsHandler(c.StatsHandlerFactory(serviceName)))
-	}
-	return opts
+	return clientConn, err
 }
 
 func (c *Connections) Close() {

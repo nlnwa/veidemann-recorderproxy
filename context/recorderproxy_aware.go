@@ -34,6 +34,7 @@ const (
 	ctxKeyPort               = ctxKey("port")
 	ctxKeyUrl                = ctxKey("url")
 	ctxKeyConnectErr         = ctxKey("connectErr")
+	ctxKeyRequestId          = ctxKey("reqid")
 	ctxKeyCrawlExecutionId   = ctxKey("eid")
 	ctxKeyJobExecutionId     = ctxKey("jid")
 	ctxKeyCollectionRef      = ctxKey("cid")
@@ -91,6 +92,10 @@ func SetConnectErrorIfNotExists(ctx context.Context, err error) {
 	}
 }
 
+func SetRequestId(ctx context.Context, reqid string) {
+	setValue(ctx, ctxKeyRequestId, reqid)
+}
+
 func SetCrawlExecutionId(ctx context.Context, eid string) {
 	setValue(ctx, ctxKeyCrawlExecutionId, eid)
 }
@@ -129,6 +134,11 @@ func GetRecordContext(ctx context.Context) (recordContext *RecordContext) {
 
 func GetConnectError(ctx context.Context) (err error) {
 	err, _ = getValue(ctx, ctxKeyConnectErr).(error)
+	return
+}
+
+func GetRequestId(ctx context.Context) (reqid string) {
+	reqid, _ = getValue(ctx, ctxKeyRequestId).(string)
 	return
 }
 
