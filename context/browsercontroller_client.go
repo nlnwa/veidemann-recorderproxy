@@ -188,6 +188,12 @@ func (rc *RecordContext) getBccSession() (*BccSession, error) {
 				close(b.msgChan)
 				return
 			}
+			if serr.Code() == codes.Unavailable {
+				l.Debugf("browser controller unavailable: %v", err)
+				b.msgChan <- doReply
+				close(b.msgChan)
+				return
+			}
 			if err != nil {
 				l.Warnf("unknown error from browser controller %v, %v, %v\n", doReply, err, serr)
 				rc.Error = fmt.Errorf("unknown error from browser controller: %v", err.Error())
@@ -301,24 +307,23 @@ func (rc *RecordContext) SendRequestError(ctx filters.Context, reqErr error) err
 		l.Panic("BUG: SendRequestError with nil error")
 	}
 
-	bb, _ := rc.getBccSession()
-	if bb.complete != nil {
-		if bb.complete.err != nil {
-			l.Debugf("Trying to send error, but another error was already sent. Previous error: %v, new error %v\n", bb.complete.err, reqErr)
-			return bb.complete.err
-		} else {
-			return reqErr
-		}
-	}
-
-	err := rc.NotifyAllDataReceived()
-	if err != nil {
-		return errors.WrapInternalError(err, errors.RuntimeException, "error notifying browser controller", err.Error())
-	}
-
 	b, err := rc.getBccSession()
 	if err != nil {
 		return err
+	} else {
+		if b.complete != nil {
+			if b.complete.err != nil {
+				l.Debugf("Trying to send error, but another error was already sent. Previous error: %v, new error %v\n", b.complete.err, reqErr)
+				return b.complete.err
+			} else {
+				return reqErr
+			}
+		}
+	}
+
+	err = rc.NotifyAllDataReceived()
+	if err != nil {
+		return errors.WrapInternalError(err, errors.RuntimeException, "error notifying browser controller", err.Error())
 	}
 
 	b.m.Lock()
@@ -418,8 +423,10 @@ func (rc *RecordContext) RegisterNewRequest(ctx filters.Context) error {
 		err = errors.WrapInternalError(err, errors.RuntimeException, "Error register with browser controller", err.Error())
 	}
 
-	bcReply := <-b.msgChan
-
+	bcReply, ok := <-b.msgChan
+	if !ok {
+		return errors.Error(errors.CanceledByBrowser, "CANCELLED_BY_BROWSER", "Browser controller closed connection")
+	}
 	switch v := bcReply.Action.(type) {
 	case *browsercontroller.DoReply_Cancel:
 		if v.Cancel == "Blocked by robots.txt" {
@@ -457,7 +464,6 @@ func (rc *RecordContext) NotifyAllDataReceived() error {
 func (rc *RecordContext) notifyDataReceived(activity browsercontroller.NotifyActivity_Activity) error {
 	b, err := rc.getBccSession()
 	if err != nil {
-		b.span.LogFields(otLog.String("event", "Notify data received"), otLog.Error(err))
 		return err
 	}
 
@@ -520,14 +526,16 @@ func RegisterConnectRequest(ctx filters.Context, conn *serviceconnections.Connec
 		err = errors.WrapInternalError(err, errors.RuntimeException, "Error register with browser controller", err.Error())
 	}
 	doReply, err := bcc.Recv()
-
-	switch v := doReply.Action.(type) {
-	case *browsercontroller.DoReply_New:
-		SetJobExecutionId(ctx, v.New.JobExecutionId)
-		SetCrawlExecutionId(ctx, v.New.CrawlExecutionId)
-		SetCollectionRef(ctx, v.New.CollectionRef)
+	if err != nil {
+		l.WithError(err).Errorf("Failed getting register response from browser controller %v", err)
+	} else {
+		switch v := doReply.Action.(type) {
+		case *browsercontroller.DoReply_New:
+			SetJobExecutionId(ctx, v.New.JobExecutionId)
+			SetCrawlExecutionId(ctx, v.New.CrawlExecutionId)
+			SetCollectionRef(ctx, v.New.CollectionRef)
+		}
 	}
-
 	_ = bcc.CloseSend()
 	for {
 		_, e := bcc.Recv()
