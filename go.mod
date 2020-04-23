@@ -28,4 +28,4 @@ require (
 	gopkg.in/check.v1 v1.0.0-20180628173108-788fd7840127 // indirect
 )
 
-replace github.com/getlantern/proxy => github.com/nlnwa/getlantern-proxy v0.0.0-20200331103001-bd5dd05da127
+replace github.com/getlantern/proxy => github.com/nlnwa/getlantern-proxy v0.0.0-20200423172401-8a11ded0a930
