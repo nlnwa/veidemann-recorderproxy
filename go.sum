@@ -108,8 +108,8 @@ github.com/mitchellh/go-server-timing v1.0.0 h1:cdHk4f7lxjwbRqTSGZFw8PCeoNYXGp4T
 github.com/mitchellh/go-server-timing v1.0.0/go.mod h1:RdipKQzCJaL4HyxFQBINbf4XoDdZKkSshqw9Bbsx1ic=
 github.com/mitchellh/mapstructure v1.1.2 h1:fmNYVwqnSfB9mZU6OS2O6GsXM+wcskZDuKQzvN1EDeE=
 github.com/mitchellh/mapstructure v1.1.2/go.mod h1:FVVH3fgwuzCH5S8UJGiWEs2h04kUh9fWfEaFds41c1Y=
-github.com/nlnwa/getlantern-proxy v0.0.0-20200423172401-8a11ded0a930 h1:U/TOab1PY/zYTa/JoS5nTsTE3ga9wo3iXIg4PyAz2t4=
-github.com/nlnwa/getlantern-proxy v0.0.0-20200423172401-8a11ded0a930/go.mod h1:+oyNbhGsr58S5DF60Hj4dXTzT/DUgOJh4r7lQaG9RVk=
+github.com/nlnwa/getlantern-proxy v0.0.0-20200424070054-d94d64dd7b79 h1:9uwbPpDEYZk8paBeg4nb031rPuFae4HBOwVNjHZo9NA=
+github.com/nlnwa/getlantern-proxy v0.0.0-20200424070054-d94d64dd7b79/go.mod h1:+oyNbhGsr58S5DF60Hj4dXTzT/DUgOJh4r7lQaG9RVk=
 github.com/nlnwa/veidemann-api-go v1.0.0-beta13 h1:gGPm2q1Vsu0QqaxAiEKGFB9a79qBShHZPaI/2ui6wyo=
 github.com/nlnwa/veidemann-api-go v1.0.0-beta13/go.mod h1:0FgUXjjJSo5mzahzhhIh7Hplm1GVQsKZRHOXVhJYpbI=
 github.com/opentracing-contrib/go-stdlib v0.0.0-20190519235532-cf7a6c988dc9 h1:QsgXACQhd9QJhEmRumbsMQQvBtmdS0mafoVEBplWXEg=
