@@ -424,7 +424,7 @@ func (rc *RecordContext) RegisterNewRequest(ctx filters.Context) error {
 	}
 
 	bcReply, ok := <-b.msgChan
-	if !ok {
+	if !ok || bcReply == nil {
 		return errors.Error(errors.CanceledByBrowser, "CANCELLED_BY_BROWSER", "Browser controller closed connection")
 	}
 	switch v := bcReply.Action.(type) {
