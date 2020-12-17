@@ -19,9 +19,9 @@ package context
 import (
 	"context"
 	"github.com/golang/protobuf/ptypes"
-	"github.com/nlnwa/veidemann-api-go/config/v1"
-	"github.com/nlnwa/veidemann-api-go/contentwriter/v1"
-	"github.com/nlnwa/veidemann-api-go/frontier/v1"
+	"github.com/nlnwa/veidemann-api/go/config/v1"
+	"github.com/nlnwa/veidemann-api/go/contentwriter/v1"
+	"github.com/nlnwa/veidemann-api/go/frontier/v1"
 	"github.com/nlnwa/veidemann-recorderproxy/constants"
 	"github.com/nlnwa/veidemann-recorderproxy/logger"
 	"github.com/nlnwa/veidemann-recorderproxy/serviceconnections"

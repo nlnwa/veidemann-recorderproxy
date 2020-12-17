@@ -20,7 +20,7 @@ import (
 	"crypto/sha1"
 	"fmt"
 	"github.com/getlantern/proxy/filters"
-	"github.com/nlnwa/veidemann-api-go/contentwriter/v1"
+	"github.com/nlnwa/veidemann-api/go/contentwriter/v1"
 	"github.com/nlnwa/veidemann-recorderproxy/constants"
 	"github.com/nlnwa/veidemann-recorderproxy/context"
 	"github.com/nlnwa/veidemann-recorderproxy/errors"

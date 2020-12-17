@@ -19,7 +19,7 @@ package context
 import (
 	"context"
 	"github.com/getlantern/proxy/filters"
-	"github.com/nlnwa/veidemann-api-go/config/v1"
+	"github.com/nlnwa/veidemann-api/go/config/v1"
 	"github.com/nlnwa/veidemann-recorderproxy/logger"
 	"net/url"
 	"sync"
