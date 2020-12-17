@@ -19,8 +19,8 @@ package recorderproxy
 import (
 	"fmt"
 	"github.com/getlantern/proxy/filters"
-	"github.com/nlnwa/veidemann-api-go/dnsresolver/v1"
-	dnsresolverV1 "github.com/nlnwa/veidemann-api-go/dnsresolver/v1"
+	"github.com/nlnwa/veidemann-api/go/dnsresolver/v1"
+	dnsresolverV1 "github.com/nlnwa/veidemann-api/go/dnsresolver/v1"
 	context2 "github.com/nlnwa/veidemann-recorderproxy/context"
 	"github.com/nlnwa/veidemann-recorderproxy/errors"
 	"github.com/opentracing/opentracing-go"

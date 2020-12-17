@@ -18,9 +18,9 @@ package serviceconnections
 
 import (
 	"context"
-	browsercontrollerV1 "github.com/nlnwa/veidemann-api-go/browsercontroller/v1"
-	contentwriterV1 "github.com/nlnwa/veidemann-api-go/contentwriter/v1"
-	dnsresolverV1 "github.com/nlnwa/veidemann-api-go/dnsresolver/v1"
+	browsercontrollerV1 "github.com/nlnwa/veidemann-api/go/browsercontroller/v1"
+	contentwriterV1 "github.com/nlnwa/veidemann-api/go/contentwriter/v1"
+	dnsresolverV1 "github.com/nlnwa/veidemann-api/go/dnsresolver/v1"
 	log "github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
 )

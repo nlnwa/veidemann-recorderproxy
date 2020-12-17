@@ -23,10 +23,10 @@ import (
 	"github.com/grpc-ecosystem/go-grpc-middleware"
 	grpc_ctxtags "github.com/grpc-ecosystem/go-grpc-middleware/tags"
 	"github.com/grpc-ecosystem/go-grpc-middleware/tracing/opentracing"
-	browsercontrollerV1 "github.com/nlnwa/veidemann-api-go/browsercontroller/v1"
-	configV1 "github.com/nlnwa/veidemann-api-go/config/v1"
-	contentwriterV1 "github.com/nlnwa/veidemann-api-go/contentwriter/v1"
-	dnsresolverV1 "github.com/nlnwa/veidemann-api-go/dnsresolver/v1"
+	browsercontrollerV1 "github.com/nlnwa/veidemann-api/go/browsercontroller/v1"
+	configV1 "github.com/nlnwa/veidemann-api/go/config/v1"
+	contentwriterV1 "github.com/nlnwa/veidemann-api/go/contentwriter/v1"
+	dnsresolverV1 "github.com/nlnwa/veidemann-api/go/dnsresolver/v1"
 	"github.com/nlnwa/veidemann-recorderproxy/logger"
 	"github.com/nlnwa/veidemann-recorderproxy/serviceconnections"
 	"github.com/nlnwa/veidemann-recorderproxy/tracing"
@@ -51,6 +51,9 @@ const bufSize = 1024 * 1024
  * Server mocks
  */
 type GrpcServiceMock struct {
+	dnsresolverV1.UnimplementedDnsResolverServer
+	contentwriterV1.UnimplementedContentWriterServer
+	browsercontrollerV1.UnimplementedBrowserControllerServer
 	dnsOpts               *serviceconnections.ConnectionOptions
 	contentWriterOpts     *serviceconnections.ConnectionOptions
 	browserControllerOpts *serviceconnections.ConnectionOptions

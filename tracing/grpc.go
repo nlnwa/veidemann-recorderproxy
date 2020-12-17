@@ -19,7 +19,7 @@ package tracing
 import (
 	"context"
 	"fmt"
-	"github.com/nlnwa/veidemann-api-go/contentwriter/v1"
+	"github.com/nlnwa/veidemann-api/go/contentwriter/v1"
 	context2 "github.com/nlnwa/veidemann-recorderproxy/context"
 	"github.com/opentracing/opentracing-go"
 	"github.com/sirupsen/logrus"

@@ -18,7 +18,7 @@ package errors
 
 import (
 	"fmt"
-	"github.com/nlnwa/veidemann-api-go/commons/v1"
+	"github.com/nlnwa/veidemann-api/go/commons/v1"
 	"net/http"
 )
 import gerrs "github.com/pkg/errors"

@@ -18,7 +18,7 @@ package context
 
 import (
 	"context"
-	"github.com/nlnwa/veidemann-api-go/contentwriter/v1"
+	"github.com/nlnwa/veidemann-api/go/contentwriter/v1"
 	"github.com/nlnwa/veidemann-recorderproxy/errors"
 	"github.com/opentracing/opentracing-go"
 	"github.com/opentracing/opentracing-go/ext"
