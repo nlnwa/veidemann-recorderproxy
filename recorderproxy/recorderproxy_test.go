@@ -28,7 +28,7 @@ import (
 	configV1 "github.com/nlnwa/veidemann-api/go/config/v1"
 	contentwriterV1 "github.com/nlnwa/veidemann-api/go/contentwriter/v1"
 	dnsresolverV1 "github.com/nlnwa/veidemann-api/go/dnsresolver/v1"
-	"github.com/nlnwa/veidemann-api/go/frontier/v1"
+	"github.com/nlnwa/veidemann-api/go/log/v1"
 	"github.com/nlnwa/veidemann-recorderproxy/logger"
 	"github.com/nlnwa/veidemann-recorderproxy/recorderproxy"
 	"github.com/nlnwa/veidemann-recorderproxy/serviceconnections"
@@ -767,7 +767,7 @@ func (test *test) generateSuccessRequests() {
 
 	r := &testutil.Requests{}
 	r.DnsResolverRequests = []*dnsresolverV1.ResolveRequest{
-		{Host: u.Hostname(), Port: int32(p), CollectionRef: &configV1.ConfigRef{Kind: configV1.Kind_collection, Id: "col1"}},
+		{Host: u.Hostname(), Port: int32(p),  ExecutionId: "eid", CollectionRef: &configV1.ConfigRef{Kind: configV1.Kind_collection, Id: "col1"}},
 	}
 
 	r.BrowserControllerRequests = append(
@@ -777,7 +777,7 @@ func (test *test) generateSuccessRequests() {
 		&browsercontrollerV1.DoRequest{
 			Action: &browsercontrollerV1.DoRequest_Completed{
 				Completed: &browsercontrollerV1.Completed{
-					CrawlLog: &frontier.CrawlLog{
+					CrawlLog: &log.CrawlLog{
 						WarcId:              "warcid_1",
 						StatusCode:          int32(test.wantStatus),
 						Size:                test.wantResponseBlockSize,
@@ -843,7 +843,7 @@ func (test *test) generateClientTimeoutRequests() {
 		&browsercontrollerV1.DoRequest{
 			Action: &browsercontrollerV1.DoRequest_Completed{
 				Completed: &browsercontrollerV1.Completed{
-					CrawlLog: &frontier.CrawlLog{
+					CrawlLog: &log.CrawlLog{
 						StatusCode:     -5011,
 						RequestedUri:   test.url,
 						Method:         "GET",
@@ -890,7 +890,7 @@ func (test *test) generateReplaceRequests() {
 		&browsercontrollerV1.DoRequest{
 			Action: &browsercontrollerV1.DoRequest_Completed{
 				Completed: &browsercontrollerV1.Completed{
-					CrawlLog: &frontier.CrawlLog{
+					CrawlLog: &log.CrawlLog{
 						WarcId:              "warcid_1",
 						StatusCode:          int32(test.wantStatus),
 						Size:                test.wantResponseBlockSize,
@@ -957,7 +957,7 @@ func (test *test) generateServerTimeoutRequests() {
 		&browsercontrollerV1.DoRequest{
 			Action: &browsercontrollerV1.DoRequest_Completed{
 				Completed: &browsercontrollerV1.Completed{
-					CrawlLog: &frontier.CrawlLog{
+					CrawlLog: &log.CrawlLog{
 						StatusCode:     -404,
 						RequestedUri:   test.url,
 						Method:         "GET",
@@ -991,7 +991,7 @@ func (test *test) generateGrpcServiceTimeoutRequests() {
 	u, p := test.parseUrlAndPort()
 	r := &testutil.Requests{}
 	r.DnsResolverRequests = []*dnsresolverV1.ResolveRequest{
-		{Host: u.Hostname(), Port: int32(p), CollectionRef: &configV1.ConfigRef{Kind: configV1.Kind_collection, Id: "col1"}},
+		{Host: u.Hostname(), Port: int32(p), ExecutionId: "eid", CollectionRef: &configV1.ConfigRef{Kind: configV1.Kind_collection, Id: "col1"}},
 	}
 
 	r.BrowserControllerRequests = generateBccNewRequests(test.url, false)
@@ -1008,7 +1008,7 @@ func (test *test) generateBrowserControllerCancelRequests() {
 	u, p := test.parseUrlAndPort()
 	r := &testutil.Requests{}
 	r.DnsResolverRequests = []*dnsresolverV1.ResolveRequest{
-		{Host: u.Hostname(), Port: int32(p), CollectionRef: &configV1.ConfigRef{Kind: configV1.Kind_collection, Id: "col1"}},
+		{Host: u.Hostname(), Port: int32(p), ExecutionId: "eid", CollectionRef: &configV1.ConfigRef{Kind: configV1.Kind_collection, Id: "col1"}},
 	}
 
 	r.BrowserControllerRequests = append(
@@ -1016,7 +1016,7 @@ func (test *test) generateBrowserControllerCancelRequests() {
 		&browsercontrollerV1.DoRequest{
 			Action: &browsercontrollerV1.DoRequest_Completed{
 				Completed: &browsercontrollerV1.Completed{
-					CrawlLog: &frontier.CrawlLog{
+					CrawlLog: &log.CrawlLog{
 						StatusCode:     -5011,
 						Method:         "GET",
 						RequestedUri:   test.url,
@@ -1054,7 +1054,7 @@ func (test *test) generateBlockedByRobotsTxtRequests() {
 		&browsercontrollerV1.DoRequest{
 			Action: &browsercontrollerV1.DoRequest_Completed{
 				Completed: &browsercontrollerV1.Completed{
-					CrawlLog: &frontier.CrawlLog{
+					CrawlLog: &log.CrawlLog{
 						StatusCode:   -9998,
 						Method:       "GET",
 						RequestedUri: test.url,
@@ -1082,7 +1082,7 @@ func (test *test) generateBrowserControllerErrorRequests() {
 
 	if u.Scheme == "https" {
 		r.DnsResolverRequests = []*dnsresolverV1.ResolveRequest{
-			{Host: u.Hostname(), Port: int32(p), CollectionRef: &configV1.ConfigRef{Kind: configV1.Kind_collection, Id: "col1"}},
+			{Host: u.Hostname(), Port: int32(p), ExecutionId: "eid", CollectionRef: &configV1.ConfigRef{Kind: configV1.Kind_collection, Id: "col1"}},
 		}
 	}
 
@@ -1097,7 +1097,7 @@ func (test *test) generateContentWriterErrorRequests() {
 	u, p := test.parseUrlAndPort()
 	r := &testutil.Requests{}
 	r.DnsResolverRequests = []*dnsresolverV1.ResolveRequest{
-		{Host: u.Hostname(), Port: int32(p), CollectionRef: &configV1.ConfigRef{Kind: configV1.Kind_collection, Id: "col1"}},
+		{Host: u.Hostname(), Port: int32(p), ExecutionId: "eid", CollectionRef: &configV1.ConfigRef{Kind: configV1.Kind_collection, Id: "col1"}},
 	}
 
 	r.BrowserControllerRequests = append(
@@ -1107,7 +1107,7 @@ func (test *test) generateContentWriterErrorRequests() {
 		&browsercontrollerV1.DoRequest{
 			Action: &browsercontrollerV1.DoRequest_Completed{
 				Completed: &browsercontrollerV1.Completed{
-					CrawlLog: &frontier.CrawlLog{
+					CrawlLog: &log.CrawlLog{
 						StatusCode:     -5,
 						Method:         "GET",
 						RequestedUri:   test.url,
@@ -1173,7 +1173,7 @@ func (test *test) generateCachedRequests() {
 		&browsercontrollerV1.DoRequest{
 			Action: &browsercontrollerV1.DoRequest_Completed{
 				Completed: &browsercontrollerV1.Completed{
-					CrawlLog: &frontier.CrawlLog{
+					CrawlLog: &log.CrawlLog{
 						StatusCode:     int32(test.wantStatus),
 						Size:           test.wantResponseBlockSize,
 						Method:         "GET",
@@ -1207,7 +1207,7 @@ func (test *test) generateConnectionRefusedRequests() {
 	r := &testutil.Requests{}
 	if u.Scheme == "https" {
 		r.DnsResolverRequests = []*dnsresolverV1.ResolveRequest{
-			{Host: u.Hostname(), Port: int32(p), CollectionRef: &configV1.ConfigRef{Kind: configV1.Kind_collection, Id: "col1"}},
+			{Host: u.Hostname(), Port: int32(p), ExecutionId: "eid", CollectionRef: &configV1.ConfigRef{Kind: configV1.Kind_collection, Id: "col1"}},
 		}
 	}
 
@@ -1218,7 +1218,7 @@ func (test *test) generateConnectionRefusedRequests() {
 		&browsercontrollerV1.DoRequest{
 			Action: &browsercontrollerV1.DoRequest_Completed{
 				Completed: &browsercontrollerV1.Completed{
-					CrawlLog: &frontier.CrawlLog{
+					CrawlLog: &log.CrawlLog{
 						StatusCode:     -2,
 						Method:         "GET",
 						RequestedUri:   test.url,
@@ -1254,7 +1254,7 @@ func (test *test) generateHandshakeFailureRequests(errorMessage string) {
 	u, p := test.parseUrlAndPort()
 	r := &testutil.Requests{}
 	r.DnsResolverRequests = []*dnsresolverV1.ResolveRequest{
-		{Host: u.Hostname(), Port: int32(p), CollectionRef: &configV1.ConfigRef{Kind: configV1.Kind_collection, Id: "col1"}},
+		{Host: u.Hostname(), Port: int32(p), ExecutionId: "eid", CollectionRef: &configV1.ConfigRef{Kind: configV1.Kind_collection, Id: "col1"}},
 	}
 
 	r.BrowserControllerRequests = append(
@@ -1263,7 +1263,7 @@ func (test *test) generateHandshakeFailureRequests(errorMessage string) {
 		&browsercontrollerV1.DoRequest{
 			Action: &browsercontrollerV1.DoRequest_Completed{
 				Completed: &browsercontrollerV1.Completed{
-					CrawlLog: &frontier.CrawlLog{
+					CrawlLog: &log.CrawlLog{
 						StatusCode:     -2,
 						Method:         "GET",
 						RequestedUri:   test.url,

@@ -9,10 +9,10 @@ require (
 	github.com/getlantern/mitm v0.0.0-20180205214248-4ce456bae650
 	github.com/getlantern/proxy v0.0.0-20190225163220-31d1cc06ed3d
 	github.com/go-test/deep v1.0.4
-	github.com/golang/protobuf v1.4.3
+	github.com/golang/protobuf v1.5.0
 	github.com/grpc-ecosystem/go-grpc-middleware v1.1.0
 	github.com/kr/pretty v0.1.0 // indirect
-	github.com/nlnwa/veidemann-api/go v0.0.0-20201211114104-e5b947faa1a3
+	github.com/nlnwa/veidemann-api/go v0.0.0-20210413093311-7ff38e848604
 	github.com/opentracing-contrib/go-stdlib v0.0.0-20190519235532-cf7a6c988dc9
 	github.com/opentracing/opentracing-go v1.1.0
 	github.com/pkg/errors v0.8.1
@@ -24,7 +24,7 @@ require (
 	github.com/uber/jaeger-lib v2.1.1+incompatible // indirect
 	golang.org/x/net v0.0.0-20201026091529-146b70c837a4
 	google.golang.org/grpc v1.33.1
-	google.golang.org/protobuf v1.25.0
+	google.golang.org/protobuf v1.26.0
 	gopkg.in/check.v1 v1.0.0-20180628173108-788fd7840127 // indirect
 )
 

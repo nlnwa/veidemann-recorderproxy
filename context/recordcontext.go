@@ -21,7 +21,7 @@ import (
 	"github.com/golang/protobuf/ptypes"
 	"github.com/nlnwa/veidemann-api/go/config/v1"
 	"github.com/nlnwa/veidemann-api/go/contentwriter/v1"
-	"github.com/nlnwa/veidemann-api/go/frontier/v1"
+	logV1 "github.com/nlnwa/veidemann-api/go/log/v1"
 	"github.com/nlnwa/veidemann-recorderproxy/constants"
 	"github.com/nlnwa/veidemann-recorderproxy/logger"
 	"github.com/nlnwa/veidemann-recorderproxy/serviceconnections"
@@ -58,7 +58,7 @@ type RecordContext struct {
 	Uri               *url.URL
 	FetchTimesTamp    time.Time
 	Meta              *contentwriter.WriteRequest_Meta
-	CrawlLog          *frontier.CrawlLog
+	CrawlLog          *logV1.CrawlLog
 	ReplacementScript *config.BrowserScript
 	closed            bool
 	FoundInCache      bool
@@ -96,7 +96,7 @@ func (rc *RecordContext) Init(proxyId int32, conn *serviceconnections.Connection
 	rc.FetchTimesTamp = time.Now()
 	fetchTimeStamp, _ := ptypes.TimestampProto(rc.FetchTimesTamp)
 
-	rc.CrawlLog = &frontier.CrawlLog{
+	rc.CrawlLog = &logV1.CrawlLog{
 		JobExecutionId: GetJobExecutionId(rc.ctx),
 		ExecutionId:    GetCrawlExecutionId(rc.ctx),
 		FetchTimeStamp: fetchTimeStamp,
