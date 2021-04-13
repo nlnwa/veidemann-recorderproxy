@@ -19,7 +19,6 @@ package recorderproxy
 import (
 	"fmt"
 	"github.com/getlantern/proxy/filters"
-	"github.com/nlnwa/veidemann-api/go/dnsresolver/v1"
 	dnsresolverV1 "github.com/nlnwa/veidemann-api/go/dnsresolver/v1"
 	context2 "github.com/nlnwa/veidemann-recorderproxy/context"
 	"github.com/nlnwa/veidemann-recorderproxy/errors"
@@ -63,7 +62,8 @@ func (f *DnsLookupFilter) resolve(ctx filters.Context, host, port string) (err e
 			return
 		}
 	}
-	dnsReq := &dnsresolver.ResolveRequest{
+	dnsReq := &dnsresolverV1.ResolveRequest{
+		ExecutionId:   context2.GetCrawlExecutionId(ctx),
 		CollectionRef: context2.GetCollectionRef(ctx),
 		Host:          host,
 		Port:          int32(p),
