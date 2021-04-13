@@ -22,7 +22,7 @@ import (
 	"fmt"
 	"github.com/getlantern/proxy/filters"
 	"github.com/nlnwa/veidemann-api/go/browsercontroller/v1"
-	"github.com/nlnwa/veidemann-api/go/frontier/v1"
+	logV1 "github.com/nlnwa/veidemann-api/go/log/v1"
 	"github.com/nlnwa/veidemann-recorderproxy/constants"
 	"github.com/nlnwa/veidemann-recorderproxy/errors"
 	"github.com/nlnwa/veidemann-recorderproxy/serviceconnections"
@@ -53,7 +53,7 @@ type BccSession struct {
 }
 
 type completeMsg struct {
-	cl  *frontier.CrawlLog
+	cl  *logV1.CrawlLog
 	err error
 }
 
@@ -271,7 +271,7 @@ func (rc *RecordContext) SaveCrawlLog() error {
 	return nil
 }
 
-func (rc *RecordContext) saveCrawlLogUnlocked(b *BccSession, cl *frontier.CrawlLog) (err error) {
+func (rc *RecordContext) saveCrawlLogUnlocked(b *BccSession, cl *logV1.CrawlLog) (err error) {
 	l := LogWithContext(rc.ctx, "PROXY:BCC")
 
 	fetchDurationMs := time.Now().Sub(rc.FetchTimesTamp).Nanoseconds() / 1000000
