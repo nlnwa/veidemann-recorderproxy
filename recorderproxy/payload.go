@@ -53,6 +53,11 @@ func writeResponseProlog(r *http.Response, w io.Writer) error {
 		return err
 	}
 
+	// Write empty line indicating the end of the header section
+	if _, err := w.Write([]byte(CRLF)); err != nil {
+		return err
+	}
+
 	// Success
 	return nil
 }
