@@ -102,6 +102,11 @@ func writeRequestProlog(r *http.Request, w io.Writer) (err error) {
 		return err
 	}
 
+	// Write empty line indicating the end of the header section
+	if _, err := w.Write([]byte(CRLF)); err != nil {
+		return err
+	}
+
 	return nil
 }
 
