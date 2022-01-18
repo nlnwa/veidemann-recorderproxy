@@ -739,7 +739,7 @@ func generateCwProtocolHeaderRequest(u *url.URL, keepAlive bool) (*contentwriter
 	if !keepAlive {
 		k = "Connection: close\r\n"
 	}
-	header := []byte(fmt.Sprintf("GET %s HTTP/1.1\r\nHost: %s:%s\r\nAccept-Encoding: gzip\r\n%sUser-Agent: Go-http-client/1.1\r\n", u.RequestURI(), u.Hostname(), u.Port(), k))
+	header := []byte(fmt.Sprintf("GET %s HTTP/1.1\r\nHost: %s:%s\r\nAccept-Encoding: gzip\r\n%sUser-Agent: Go-http-client/1.1\r\n\r\n", u.RequestURI(), u.Hostname(), u.Port(), k))
 	req := &contentwriterV1.WriteRequest{
 		Value: &contentwriterV1.WriteRequest_ProtocolHeader{
 			ProtocolHeader: &contentwriterV1.Data{RecordNum: 0, Data: header},
