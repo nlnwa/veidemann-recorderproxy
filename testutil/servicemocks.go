@@ -267,7 +267,6 @@ func (s *GrpcServiceMock) Write(server contentwriterV1.ContentWriter_WriteServer
 	records := map[int32]*contentwriterV1.WriteResponseMeta_RecordMeta{}
 	data := make(map[int32][]byte)
 	size := make(map[int32]int64)
-	separatorAdded := make(map[int32]bool)
 	gotMeta := false
 	gotCancel := false
 	blockDigest := make(map[int32]hash.Hash)
@@ -303,17 +302,10 @@ func (s *GrpcServiceMock) Write(server contentwriterV1.ContentWriter_WriteServer
 		switch v := request.Value.(type) {
 		case *contentwriterV1.WriteRequest_ProtocolHeader:
 			size[v.ProtocolHeader.RecordNum] = int64(len(v.ProtocolHeader.Data))
-			separatorAdded[v.ProtocolHeader.RecordNum] = false
 			blockDigest[v.ProtocolHeader.RecordNum] = sha1.New()
 			blockDigest[v.ProtocolHeader.RecordNum].Write(v.ProtocolHeader.Data)
 			data[v.ProtocolHeader.RecordNum] = v.ProtocolHeader.Data
 		case *contentwriterV1.WriteRequest_Payload:
-			if !separatorAdded[v.Payload.RecordNum] {
-				separatorAdded[v.Payload.RecordNum] = true
-				size[v.Payload.RecordNum] += 2
-				blockDigest[v.Payload.RecordNum].Write([]byte("\r\n"))
-				data[v.Payload.RecordNum] = append(data[v.Payload.RecordNum], '\r', '\n')
-			}
 			size[v.Payload.RecordNum] += int64(len(v.Payload.Data))
 			blockDigest[v.Payload.RecordNum].Write(v.Payload.Data)
 			data[v.Payload.RecordNum] = append(data[v.Payload.RecordNum], v.Payload.Data...)

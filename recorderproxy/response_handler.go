@@ -39,7 +39,6 @@ type wrappedResponseBody struct {
 	recNum            int32
 	size              int64
 	blockCrc          hash.Hash
-	separatorAdded    bool
 	recordMeta        *contentwriter.WriteRequestMeta_RecordMeta
 	replacementReader io.Reader
 	mutex             sync.Mutex
@@ -130,11 +129,6 @@ func (b *wrappedResponseBody) innerRead(r io.Reader, p []byte) (n int, err error
 
 	if n > 0 {
 		if !b.recordContext.FoundInCache {
-			if !b.separatorAdded {
-				b.size += 2 // Add size for header and payload separator (\r\n)
-				b.blockCrc.Write([]byte(CRLF))
-				b.separatorAdded = true
-			}
 			_ = b.recordContext.NotifyDataReceived()
 
 			b.size += int64(n)

@@ -52,15 +52,14 @@ func errorResponse(ctx filters.Context, req *http.Request, err error) (*http.Res
 
 type wrappedRequestBody struct {
 	io.ReadCloser
-	ctx            filters.Context
-	recordContext  *context.RecordContext
-	recNum         int32
-	size           int64
-	blockCrc       hash.Hash
-	separatorAdded bool
-	recordMeta     *contentwriter.WriteRequestMeta_RecordMeta
-	mutex          sync.Mutex
-	eof            bool
+	ctx           filters.Context
+	recordContext *context.RecordContext
+	recNum        int32
+	size          int64
+	blockCrc      hash.Hash
+	recordMeta    *contentwriter.WriteRequestMeta_RecordMeta
+	mutex         sync.Mutex
+	eof           bool
 }
 
 func WrapRequestBody(ctx filters.Context, body io.ReadCloser, contentType string,
@@ -110,12 +109,6 @@ func (b *wrappedRequestBody) Read(p []byte) (n int, err error) {
 
 	n, err = b.ReadCloser.Read(p)
 	if n > 0 {
-		if !b.separatorAdded {
-			b.size += 2 // Add size for header and payload separator (\r\n)
-			b.blockCrc.Write([]byte(CRLF))
-			b.separatorAdded = true
-		}
-
 		b.size += int64(n)
 		d := p[:n]
 		b.writeCrc(d)
