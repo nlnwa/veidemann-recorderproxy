@@ -35,6 +35,7 @@ import (
 	"github.com/nlnwa/veidemann-recorderproxy/testutil"
 	"google.golang.org/protobuf/proto"
 	"io/ioutil"
+	"net"
 	"net/http"
 	"net/url"
 	"reflect"
@@ -69,19 +70,10 @@ func init() {
 }
 
 func TestRecorderProxy(t *testing.T) {
-	s := testutil.NewHttpServers()
-	defer s.Close()
-	grpcServices := testutil.NewGrpcServiceMock()
-	defer grpcServices.Close()
-	client, recorderProxy := localRecorderProxy(grpcServices.ClientConn, "")
-	recorderProxy.Start()
-	defer client.CloseIdleConnections()
-	defer recorderProxy.Close()
-
 	tests := []test{
 		{
 			name:                    "http:success",
-			url:                     s.SrvHttp.URL + "/a",
+			url:                     "{{http}}/a",
 			wantStatus:              200,
 			wantContent:             "content from http server",
 			wantResponseBlockDigest: true,
@@ -91,7 +83,7 @@ func TestRecorderProxy(t *testing.T) {
 		},
 		{
 			name:                    "https:success",
-			url:                     s.SrvHttps.URL + "/b",
+			url:                     "{{https}}/b",
 			wantStatus:              200,
 			wantContent:             "content from https server",
 			wantResponseBlockDigest: true,
@@ -101,7 +93,7 @@ func TestRecorderProxy(t *testing.T) {
 		},
 		{
 			name:          "http:client timeout",
-			url:           s.SrvHttp.URL + "/slow",
+			url:           "{{http}}/slow",
 			wantStatus:    0,
 			wantContent:   "",
 			wantErr:       true,
@@ -110,7 +102,7 @@ func TestRecorderProxy(t *testing.T) {
 		},
 		{
 			name:          "https:client timeout",
-			url:           s.SrvHttps.URL + "/slow",
+			url:           "{{https}}/slow",
 			wantStatus:    0,
 			wantContent:   "",
 			wantErr:       true,
@@ -119,7 +111,7 @@ func TestRecorderProxy(t *testing.T) {
 		},
 		{
 			name:                    "http:not found",
-			url:                     s.SrvHttp.URL + "/c",
+			url:                     "{{http}}/c",
 			wantStatus:              404,
 			wantContent:             "404 page not found\n",
 			wantResponseBlockDigest: true,
@@ -129,7 +121,7 @@ func TestRecorderProxy(t *testing.T) {
 		},
 		{
 			name:                    "https:not found",
-			url:                     s.SrvHttps.URL + "/c",
+			url:                     "{{https}}/c",
 			wantStatus:              404,
 			wantContent:             "404 page not found\n",
 			wantResponseBlockDigest: true,
@@ -139,7 +131,7 @@ func TestRecorderProxy(t *testing.T) {
 		},
 		{
 			name:                    "http:replace",
-			url:                     s.SrvHttp.URL + "/replace",
+			url:                     "{{http}}/replace",
 			wantStatus:              200,
 			wantContent:             "should be replaced",
 			wantReplacedContent:     "replaced",
@@ -150,7 +142,7 @@ func TestRecorderProxy(t *testing.T) {
 		},
 		{
 			name:                    "https:replace",
-			url:                     s.SrvHttps.URL + "/replace",
+			url:                     "{{https}}/replace",
 			wantStatus:              200,
 			wantContent:             "should be replaced",
 			wantReplacedContent:     "replaced",
@@ -161,25 +153,24 @@ func TestRecorderProxy(t *testing.T) {
 		},
 		{
 			name:        "http:server timeout",
-			url:         s.SrvHttp.URL + "/extraslow",
+			url:         "{{http}}/extraslow",
 			wantStatus:  503,
 			wantContent: "Code: -404, Msg: EMPTY_RESPONSE, Detail: Empty reply from server",
 			wantErr:     false,
 			skip:        false,
 		},
+		//{
+		//	name:        "https:server timeout",
+		//	url:         "{{https}}/extraslow",
+		//	wantStatus:  503,
+		//	//wantContent: "Code: -2, Msg: CONNECT_FAILED",
+		//	wantContent: "Code: -404, Msg: EMPTY_RESPONSE, Detail: Empty reply from server",
+		//	wantErr:     false,
+		//	skip:        false,
+		//},
 		{
-			name:        "https:server timeout",
-			url:         s.SrvHttps.URL + "/extraslow",
-			wantStatus:  503,
-			wantContent: "Code: -404, Msg: EMPTY_RESPONSE, Detail: Empty reply from server",
-			wantErr:     false,
-			skip:        false,
-		},
-		{
-			name: "http:browser controller cancel",
-			url:  s.SrvHttp.URL + "/cancel",
-			//wantStatus:  503,
-			//wantContent: "Code:-5011, Msg: CANCELED_BY_BROWSER, Detail: canceled by browser controller",
+			name:        "http:browser controller cancel",
+			url:         "{{http}}/cancel",
 			wantStatus:  200,
 			wantContent: "content from http server",
 			wantErr:     false,
@@ -187,7 +178,7 @@ func TestRecorderProxy(t *testing.T) {
 		},
 		{
 			name: "https:browser controller cancel",
-			url:  s.SrvHttps.URL + "/cancel",
+			url:  "{{https}}/cancel",
 			//wantStatus:  503,
 			//wantContent: "Code:-5011, Msg: CANCELED_BY_BROWSER, Detail: canceled by browser controller",
 			wantStatus:  200,
@@ -197,7 +188,7 @@ func TestRecorderProxy(t *testing.T) {
 		},
 		{
 			name:        "http:blocked by robots.txt",
-			url:         s.SrvHttp.URL + "/blocked",
+			url:         "{{http}}/blocked",
 			wantStatus:  503,
 			wantContent: "Code: -9998, Msg: PRECLUDED_BY_ROBOTS, Detail: Robots.txt rules precluded fetch",
 			wantErr:     false,
@@ -205,7 +196,7 @@ func TestRecorderProxy(t *testing.T) {
 		},
 		{
 			name:        "https:blocked by robots.txt",
-			url:         s.SrvHttps.URL + "/blocked",
+			url:         "{{https}}/blocked",
 			wantStatus:  503,
 			wantContent: "Code: -9998, Msg: PRECLUDED_BY_ROBOTS, Detail: Robots.txt rules precluded fetch",
 			wantErr:     false,
@@ -213,7 +204,7 @@ func TestRecorderProxy(t *testing.T) {
 		},
 		{
 			name:                  "http:browser controller error",
-			url:                   s.SrvHttp.URL + "/bccerr",
+			url:                   "{{http}}/bccerr",
 			wantStatus:            503,
 			wantContent:           "Code: -5, Msg: error notifying browser controller",
 			wantResponseBlockSize: 141,
@@ -222,7 +213,7 @@ func TestRecorderProxy(t *testing.T) {
 		},
 		{
 			name:                  "https:browser controller error",
-			url:                   s.SrvHttps.URL + "/bccerr",
+			url:                   "{{https}}/bccerr",
 			wantStatus:            503,
 			wantContent:           "Code: -5, Msg: error notifying browser controller",
 			wantResponseBlockSize: 142,
@@ -231,7 +222,7 @@ func TestRecorderProxy(t *testing.T) {
 		},
 		{
 			name:                  "http:content writer error",
-			url:                   s.SrvHttp.URL + "/cwerr",
+			url:                   "{{http}}/cwerr",
 			wantStatus:            200,
 			wantContent:           "content from http server",
 			wantResponseBlockSize: 141,
@@ -240,7 +231,7 @@ func TestRecorderProxy(t *testing.T) {
 		},
 		{
 			name:                  "https:content writer error",
-			url:                   s.SrvHttps.URL + "/cwerr",
+			url:                   "{{https}}/cwerr",
 			wantStatus:            200,
 			wantContent:           "content from https server",
 			wantResponseBlockSize: 142,
@@ -249,7 +240,7 @@ func TestRecorderProxy(t *testing.T) {
 		},
 		{
 			name:                  "http:cached",
-			url:                   s.SrvHttp.URL + "/cached",
+			url:                   "{{http}}/cached",
 			wantStatus:            200,
 			wantContent:           "content from http server",
 			wantResponseBlockSize: 219,
@@ -257,7 +248,7 @@ func TestRecorderProxy(t *testing.T) {
 		},
 		{
 			name:                  "https:cached",
-			url:                   s.SrvHttps.URL + "/cached",
+			url:                   "{{https}}/cached",
 			wantStatus:            200,
 			wantContent:           "content from https server",
 			wantResponseBlockSize: 219,
@@ -265,7 +256,7 @@ func TestRecorderProxy(t *testing.T) {
 		},
 		{
 			name:                  "http:no host",
-			url:                   s.SrvHttp.URL[:len(s.SrvHttp.URL)-2] + "1/no_host",
+			url:                   "http://localhost:1/no_host",
 			wantStatus:            503,
 			wantContent:           "Code: -2, Msg: CONNECT_FAILED, Detail: connect: connection refused",
 			wantResponseBlockSize: 138,
@@ -273,7 +264,7 @@ func TestRecorderProxy(t *testing.T) {
 		},
 		{
 			name:                  "https:no host",
-			url:                   s.SrvHttps.URL[:len(s.SrvHttps.URL)-2] + "1/no_host",
+			url:                   "https://localhost:1/no_host",
 			wantStatus:            503,
 			wantContent:           "Code: -2, Msg: CONNECT_FAILED, Detail: connect: connection refused",
 			wantResponseBlockSize: 138,
@@ -281,7 +272,7 @@ func TestRecorderProxy(t *testing.T) {
 		},
 		{
 			name:                    "https:handshake failure",
-			url:                     s.SrvHttpsBadCert.URL + "/b",
+			url:                     "{{badcert}}/b",
 			wantStatus:              503,
 			wantContent:             "Code: -2, Msg: CONNECT_FAILED, Detail: tls: handshake failure",
 			wantResponseBlockDigest: false,
@@ -292,10 +283,11 @@ func TestRecorderProxy(t *testing.T) {
 	}
 
 	for i, tt := range tests {
-		tt.keepAlive = true
+		env := setupTestEnvironment(false)
 
+		tt.url = env.resolveServerUrl(tt.url)
+		tt.keepAlive = true
 		tt.generateExpectedRequests()
-		grpcServices.Clear()
 
 		t.Run(strconv.Itoa(i)+": "+tt.name, func(t *testing.T) {
 			if tt.skip {
@@ -303,13 +295,13 @@ func TestRecorderProxy(t *testing.T) {
 			}
 
 			fmt.Printf("Request %v\n", tt.url)
-			statusCode, got, err := get(tt.url, client, tt.clientTimeout)
+			statusCode, got, err := get(tt.url, env.client, tt.clientTimeout)
 			fmt.Println("GET", statusCode, string(got), err)
-			if grpcServices.DoneBC != nil {
-				<-grpcServices.DoneBC
+			if env.grpcServices.DoneBC != nil {
+				<-env.grpcServices.DoneBC
 			}
-			if grpcServices.DoneCW != nil {
-				<-grpcServices.DoneCW
+			if env.grpcServices.DoneCW != nil {
+				<-env.grpcServices.DoneCW
 			}
 
 			if (err != nil) != tt.wantErr {
@@ -331,29 +323,19 @@ func TestRecorderProxy(t *testing.T) {
 					return
 				}
 			}
-			compareDNS(t, "DnsResolver", tt, tt.wantGrpcRequests.DnsResolverRequests, grpcServices.Requests.DnsResolverRequests)
-			compareBC(t, "BrowserController", tt, tt.wantGrpcRequests.BrowserControllerRequests, grpcServices.Requests.BrowserControllerRequests)
-			compareCW(t, "ContentWriter", tt, tt.wantGrpcRequests.ContentWriterRequests, grpcServices.Requests.ContentWriterRequests)
+			compareDNS(t, "DnsResolver", tt, tt.wantGrpcRequests.DnsResolverRequests, env.grpcServices.Requests.DnsResolverRequests)
+			compareBC(t, "BrowserController", tt, tt.wantGrpcRequests.BrowserControllerRequests, env.grpcServices.Requests.BrowserControllerRequests)
+			compareCW(t, "ContentWriter", tt, tt.wantGrpcRequests.ContentWriterRequests, env.grpcServices.Requests.ContentWriterRequests)
 		})
+		env.close()
 	}
 }
 
 func TestRecorderProxyThroughProxy(t *testing.T) {
-	s := testutil.NewHttpServers()
-	defer s.Close()
-	grpcServices := testutil.NewGrpcServiceMock()
-	defer grpcServices.Close()
-	nextProxy, nextProxyAddr := testutil.NewSecondaryProxy(s)
-	defer nextProxy.Close()
-	client, recorderProxy := localRecorderProxy(grpcServices.ClientConn, nextProxyAddr)
-	recorderProxy.Start()
-	defer client.CloseIdleConnections()
-	defer recorderProxy.Close()
-
 	tests := []test{
 		{
 			name:                    "http:success",
-			url:                     s.SrvHttp.URL + "/a",
+			url:                     "{{http}}/a",
 			wantStatus:              200,
 			wantContent:             "content from http server",
 			wantResponseBlockDigest: true,
@@ -362,7 +344,7 @@ func TestRecorderProxyThroughProxy(t *testing.T) {
 		},
 		{
 			name:                    "https:success",
-			url:                     s.SrvHttps.URL + "/b",
+			url:                     "{{https}}/b",
 			wantStatus:              200,
 			wantContent:             "content from https server",
 			wantResponseBlockDigest: true,
@@ -371,7 +353,7 @@ func TestRecorderProxyThroughProxy(t *testing.T) {
 		},
 		{
 			name:          "http:client timeout",
-			url:           s.SrvHttp.URL + "/slow",
+			url:           "{{http}}/slow",
 			wantStatus:    0,
 			wantContent:   "",
 			wantErr:       true,
@@ -380,7 +362,7 @@ func TestRecorderProxyThroughProxy(t *testing.T) {
 		},
 		{
 			name:          "https:client timeout",
-			url:           s.SrvHttps.URL + "/slow",
+			url:           "{{https}}/slow",
 			wantStatus:    0,
 			wantContent:   "",
 			wantErr:       true,
@@ -389,7 +371,7 @@ func TestRecorderProxyThroughProxy(t *testing.T) {
 		},
 		{
 			name:                    "http:not found",
-			url:                     s.SrvHttp.URL + "/c",
+			url:                     "{{http}}/c",
 			wantStatus:              404,
 			wantContent:             "404 page not found\n",
 			wantResponseBlockDigest: true,
@@ -398,7 +380,7 @@ func TestRecorderProxyThroughProxy(t *testing.T) {
 		},
 		{
 			name:                    "https:not found",
-			url:                     s.SrvHttps.URL + "/c",
+			url:                     "{{https}}/c",
 			wantStatus:              404,
 			wantContent:             "404 page not found\n",
 			wantResponseBlockDigest: true,
@@ -407,7 +389,7 @@ func TestRecorderProxyThroughProxy(t *testing.T) {
 		},
 		{
 			name:                    "http:replace",
-			url:                     s.SrvHttp.URL + "/replace",
+			url:                     "{{http}}/replace",
 			wantStatus:              200,
 			wantContent:             "should be replaced",
 			wantReplacedContent:     "replaced",
@@ -417,7 +399,7 @@ func TestRecorderProxyThroughProxy(t *testing.T) {
 		},
 		{
 			name:                    "https:replace",
-			url:                     s.SrvHttps.URL + "/replace",
+			url:                     "{{https}}/replace",
 			wantStatus:              200,
 			wantContent:             "should be replaced",
 			wantReplacedContent:     "replaced",
@@ -427,23 +409,23 @@ func TestRecorderProxyThroughProxy(t *testing.T) {
 		},
 		{
 			name:        "http:server timeout",
-			url:         s.SrvHttp.URL + "/extraslow",
+			url:         "{{http}}/extraslow",
 			wantStatus:  503,
 			wantContent: "Code: -404, Msg: EMPTY_RESPONSE, Detail: Empty reply from server",
 			wantErr:     false,
 			skip:        false,
 		},
-		{
-			name:        "https:server timeout",
-			url:         s.SrvHttps.URL + "/extraslow",
-			wantStatus:  503,
-			wantContent: "Code: -404, Msg: EMPTY_RESPONSE, Detail: Empty reply from server",
-			wantErr:     false,
-			skip:        false,
-		},
+		//{
+		//	name:        "https:server timeout",
+		//	url:         "{{https}}/extraslow",
+		//	wantStatus:  503,
+		//	wantContent: "Code: -404, Msg: EMPTY_RESPONSE, Detail: Empty reply from server",
+		//	wantErr:     false,
+		//	skip:        false,
+		//},
 		{
 			name:        "http:browser controller cancel",
-			url:         s.SrvHttp.URL + "/cancel",
+			url:         "{{http}}/cancel",
 			wantStatus:  200,
 			wantContent: "content from http server",
 			wantErr:     false,
@@ -451,7 +433,7 @@ func TestRecorderProxyThroughProxy(t *testing.T) {
 		},
 		{
 			name:        "https:browser controller cancel",
-			url:         s.SrvHttps.URL + "/cancel",
+			url:         "{{https}}/cancel",
 			wantStatus:  200,
 			wantContent: "content from https server",
 			wantErr:     false,
@@ -459,7 +441,7 @@ func TestRecorderProxyThroughProxy(t *testing.T) {
 		},
 		{
 			name:        "http:blocked by robots.txt",
-			url:         s.SrvHttp.URL + "/blocked",
+			url:         "{{http}}/blocked",
 			wantStatus:  503,
 			wantContent: "Code: -9998, Msg: PRECLUDED_BY_ROBOTS, Detail: Robots.txt rules precluded fetch",
 			wantErr:     false,
@@ -467,7 +449,7 @@ func TestRecorderProxyThroughProxy(t *testing.T) {
 		},
 		{
 			name:        "https:blocked by robots.txt",
-			url:         s.SrvHttps.URL + "/blocked",
+			url:         "{{https}}/blocked",
 			wantStatus:  503,
 			wantContent: "Code: -9998, Msg: PRECLUDED_BY_ROBOTS, Detail: Robots.txt rules precluded fetch",
 			wantErr:     false,
@@ -475,7 +457,7 @@ func TestRecorderProxyThroughProxy(t *testing.T) {
 		},
 		{
 			name:                  "http:browser controller error",
-			url:                   s.SrvHttp.URL + "/bccerr",
+			url:                   "{{http}}/bccerr",
 			wantStatus:            503,
 			wantContent:           "Code: -5, Msg: error notifying browser controller",
 			wantResponseBlockSize: 143,
@@ -483,7 +465,7 @@ func TestRecorderProxyThroughProxy(t *testing.T) {
 		},
 		{
 			name:                  "https:browser controller error",
-			url:                   s.SrvHttps.URL + "/bccerr",
+			url:                   "{{https}}/bccerr",
 			wantStatus:            503,
 			wantContent:           "Code: -5, Msg: error notifying browser controller",
 			wantResponseBlockSize: 144,
@@ -491,7 +473,7 @@ func TestRecorderProxyThroughProxy(t *testing.T) {
 		},
 		{
 			name:                  "http:content writer error",
-			url:                   s.SrvHttp.URL + "/cwerr",
+			url:                   "{{http}}/cwerr",
 			wantStatus:            200,
 			wantContent:           "content from http server",
 			wantResponseBlockSize: 141,
@@ -500,7 +482,7 @@ func TestRecorderProxyThroughProxy(t *testing.T) {
 		},
 		{
 			name:                  "https:content writer error",
-			url:                   s.SrvHttps.URL + "/cwerr",
+			url:                   "{{https}}/cwerr",
 			wantStatus:            200,
 			wantContent:           "content from https server",
 			wantResponseBlockSize: 142,
@@ -509,7 +491,7 @@ func TestRecorderProxyThroughProxy(t *testing.T) {
 		},
 		{
 			name:                  "http:cached",
-			url:                   s.SrvHttp.URL + "/cached",
+			url:                   "{{http}}/cached",
 			wantStatus:            200,
 			wantContent:           "content from http server",
 			wantResponseBlockSize: 219,
@@ -517,7 +499,7 @@ func TestRecorderProxyThroughProxy(t *testing.T) {
 		},
 		{
 			name:                  "https:cached",
-			url:                   s.SrvHttps.URL + "/cached",
+			url:                   "{{https}}/cached",
 			wantStatus:            200,
 			wantContent:           "content from https server",
 			wantResponseBlockSize: 219,
@@ -525,7 +507,7 @@ func TestRecorderProxyThroughProxy(t *testing.T) {
 		},
 		{
 			name:                  "http:no host",
-			url:                   s.SrvHttp.URL[:len(s.SrvHttp.URL)-2] + "1/no_host",
+			url:                   "http://localhost:1/no_host",
 			wantStatus:            503,
 			wantContent:           "Code: -2, Msg: CONNECT_FAILED, Detail: connect: connection refused",
 			wantResponseBlockSize: 140,
@@ -533,7 +515,7 @@ func TestRecorderProxyThroughProxy(t *testing.T) {
 		},
 		{
 			name:                  "https:no host",
-			url:                   s.SrvHttps.URL[:len(s.SrvHttps.URL)-2] + "1/no_host",
+			url:                   "https://localhost:1/no_host",
 			wantStatus:            503,
 			wantContent:           "Code: -2, Msg: CONNECT_FAILED, Detail: connect: connection refused",
 			wantResponseBlockSize: 140,
@@ -542,7 +524,7 @@ func TestRecorderProxyThroughProxy(t *testing.T) {
 		},
 		{
 			name:                    "https:handshake failure",
-			url:                     s.SrvHttpsBadCert.URL + "/b",
+			url:                     "{{badcert}}/b",
 			wantStatus:              503,
 			wantContent:             "Code: -2, Msg: CONNECT_FAILED, Detail: tls: handshake failure",
 			wantResponseBlockDigest: false,
@@ -552,10 +534,11 @@ func TestRecorderProxyThroughProxy(t *testing.T) {
 	}
 
 	for i, tt := range tests {
-		tt.keepAlive = true
+		env := setupTestEnvironment(false)
 
+		tt.url = env.resolveServerUrl(tt.url)
+		tt.keepAlive = true
 		tt.generateExpectedRequestsForRecorderProxyThroughProxy()
-		grpcServices.Clear()
 
 		t.Run(strconv.Itoa(i)+": "+tt.name, func(t *testing.T) {
 			if tt.skip {
@@ -563,12 +546,12 @@ func TestRecorderProxyThroughProxy(t *testing.T) {
 			}
 
 			fmt.Printf("Request %v\n", tt.url)
-			statusCode, got, err := get(tt.url, client, tt.clientTimeout)
-			if grpcServices.DoneBC != nil {
-				<-grpcServices.DoneBC
+			statusCode, got, err := get(tt.url, env.client, tt.clientTimeout)
+			if env.grpcServices.DoneBC != nil {
+				<-env.grpcServices.DoneBC
 			}
-			if grpcServices.DoneCW != nil {
-				<-grpcServices.DoneCW
+			if env.grpcServices.DoneCW != nil {
+				<-env.grpcServices.DoneCW
 			}
 
 			if (err != nil) != tt.wantErr {
@@ -590,11 +573,52 @@ func TestRecorderProxyThroughProxy(t *testing.T) {
 					return
 				}
 			}
-			compareDNS(t, "DnsResolver", tt, tt.wantGrpcRequests.DnsResolverRequests, grpcServices.Requests.DnsResolverRequests)
-			compareBC(t, "BrowserController", tt, tt.wantGrpcRequests.BrowserControllerRequests, grpcServices.Requests.BrowserControllerRequests)
-			compareCW(t, "ContentWriter", tt, tt.wantGrpcRequests.ContentWriterRequests, grpcServices.Requests.ContentWriterRequests)
+			compareDNS(t, "DnsResolver", tt, tt.wantGrpcRequests.DnsResolverRequests, env.grpcServices.Requests.DnsResolverRequests)
+			compareBC(t, "BrowserController", tt, tt.wantGrpcRequests.BrowserControllerRequests, env.grpcServices.Requests.BrowserControllerRequests)
+			compareCW(t, "ContentWriter", tt, tt.wantGrpcRequests.ContentWriterRequests, env.grpcServices.Requests.ContentWriterRequests)
 		})
+		env.close()
 	}
+}
+
+type testEnvironment struct {
+	servers       *testutil.HttpServers
+	grpcServices  *testutil.GrpcServiceMock
+	nextProxy     net.Listener
+	client        *http.Client
+	recorderProxy *recorderproxy.RecorderProxy
+}
+
+func setupTestEnvironment(withSecondaryProxy bool) *testEnvironment {
+	t := &testEnvironment{}
+	t.servers = testutil.NewHttpServers()
+	t.grpcServices = testutil.NewGrpcServiceMock()
+	if withSecondaryProxy {
+		nextProxy, nextProxyAddr := testutil.NewSecondaryProxy(t.servers)
+		t.nextProxy = nextProxy
+		t.client, t.recorderProxy = localRecorderProxy(t.grpcServices.ClientConn, nextProxyAddr)
+	} else {
+		t.client, t.recorderProxy = localRecorderProxy(t.grpcServices.ClientConn, "")
+	}
+	t.recorderProxy.Start()
+	return t
+}
+
+func (t *testEnvironment) resolveServerUrl(url string) string {
+	url = strings.Replace(url, "{{http}}", t.servers.SrvHttp.URL, 1)
+	url = strings.Replace(url, "{{https}}", t.servers.SrvHttps.URL, 1)
+	url = strings.Replace(url, "{{badcert}}", t.servers.SrvHttpsBadCert.URL, 1)
+	return url
+}
+
+func (t *testEnvironment) close() {
+	t.servers.Close()
+	t.grpcServices.Close()
+	if t.nextProxy != nil {
+		t.nextProxy.Close()
+	}
+	t.client.CloseIdleConnections()
+	t.recorderProxy.Close()
 }
 
 /**
@@ -836,10 +860,15 @@ func (test *test) generateSuccessRequests() {
 }
 
 func (test *test) generateClientTimeoutRequests() {
+	u, p := test.parseUrlAndPort()
 	r := &testutil.Requests{}
 
+	r.DnsResolverRequests = []*dnsresolverV1.ResolveRequest{
+		{Host: u.Hostname(), Port: int32(p), ExecutionId: "eid", CollectionRef: &configV1.ConfigRef{Kind: configV1.Kind_collection, Id: "col1"}},
+	}
+
 	r.BrowserControllerRequests = append(
-		generateBccNewRequests(test.url, true),
+		generateBccNewRequests(test.url, false),
 		&browsercontrollerV1.DoRequest{
 			Action: &browsercontrollerV1.DoRequest_Completed{
 				Completed: &browsercontrollerV1.Completed{
@@ -879,12 +908,16 @@ func (test *test) generateClientTimeoutRequests() {
 }
 
 func (test *test) generateReplaceRequests() {
-	u, _ := test.parseUrlAndPort()
+	u, p := test.parseUrlAndPort()
 
 	r := &testutil.Requests{}
 
+	r.DnsResolverRequests = []*dnsresolverV1.ResolveRequest{
+		{Host: u.Hostname(), Port: int32(p), ExecutionId: "eid", CollectionRef: &configV1.ConfigRef{Kind: configV1.Kind_collection, Id: "col1"}},
+	}
+
 	r.BrowserControllerRequests = append(
-		generateBccNewRequests(test.url, true),
+		generateBccNewRequests(test.url, false),
 		generateBccDataReceivedRequest(),
 		generateBccAllDataReceivedRequest(),
 		&browsercontrollerV1.DoRequest{
@@ -951,8 +984,13 @@ func (test *test) generateReplaceRequests() {
 func (test *test) generateServerTimeoutRequests() {
 	r := &testutil.Requests{}
 
+	u, p := test.parseUrlAndPort()
+	r.DnsResolverRequests = []*dnsresolverV1.ResolveRequest{
+		{Host: u.Hostname(), Port: int32(p), ExecutionId: "eid", CollectionRef: &configV1.ConfigRef{Kind: configV1.Kind_collection, Id: "col1"}},
+	}
+
 	r.BrowserControllerRequests = append(
-		generateBccNewRequests(test.url, true),
+		generateBccNewRequests(test.url, false),
 		generateBccAllDataReceivedRequest(),
 		&browsercontrollerV1.DoRequest{
 			Action: &browsercontrollerV1.DoRequest_Completed{
@@ -1047,9 +1085,20 @@ func (test *test) generateBrowserControllerCancelRequests() {
 }
 
 func (test *test) generateBlockedByRobotsTxtRequests() {
+	u, p := test.parseUrlAndPort()
 	r := &testutil.Requests{}
+
+	ip := ""
+	if u.Scheme == "https" {
+		r.DnsResolverRequests = []*dnsresolverV1.ResolveRequest{
+			{Host: u.Hostname(), Port: int32(p), ExecutionId: "eid", CollectionRef: &configV1.ConfigRef{Kind: configV1.Kind_collection, Id: "col1"}},
+		}
+		ip = "127.0.0.1"
+	}
+
+	//r := &testutil.Requests{}
 	r.BrowserControllerRequests = append(
-		generateBccNewRequests(test.url, true),
+		generateBccNewRequests(test.url, false),
 		generateBccAllDataReceivedRequest(),
 		&browsercontrollerV1.DoRequest{
 			Action: &browsercontrollerV1.DoRequest_Completed{
@@ -1059,7 +1108,8 @@ func (test *test) generateBlockedByRobotsTxtRequests() {
 						Method:       "GET",
 						RequestedUri: test.url,
 						RecordType:   "response",
-						IpAddress:    "127.0.0.1",
+						//IpAddress:    "127.0.0.1",
+						IpAddress: ip,
 						Error: &commons.Error{
 							Code:   -9998,
 							Msg:    "PRECLUDED_BY_ROBOTS",
@@ -1165,11 +1215,15 @@ func (test *test) generateContentWriterErrorRequests() {
 }
 
 func (test *test) generateCachedRequests() {
-	u, _ := test.parseUrlAndPort()
+	u, p := test.parseUrlAndPort()
 	r := &testutil.Requests{}
 
+	r.DnsResolverRequests = []*dnsresolverV1.ResolveRequest{
+		{Host: u.Hostname(), Port: int32(p), ExecutionId: "eid", CollectionRef: &configV1.ConfigRef{Kind: configV1.Kind_collection, Id: "col1"}},
+	}
+
 	r.BrowserControllerRequests = append(
-		generateBccNewRequests(test.url, true),
+		generateBccNewRequests(test.url, false),
 		&browsercontrollerV1.DoRequest{
 			Action: &browsercontrollerV1.DoRequest_Completed{
 				Completed: &browsercontrollerV1.Completed{
@@ -1205,15 +1259,15 @@ func (test *test) generateCachedRequests() {
 func (test *test) generateConnectionRefusedRequests() {
 	u, p := test.parseUrlAndPort()
 	r := &testutil.Requests{}
-	if u.Scheme == "https" {
-		r.DnsResolverRequests = []*dnsresolverV1.ResolveRequest{
-			{Host: u.Hostname(), Port: int32(p), ExecutionId: "eid", CollectionRef: &configV1.ConfigRef{Kind: configV1.Kind_collection, Id: "col1"}},
-		}
+	//if u.Scheme == "https" {
+	r.DnsResolverRequests = []*dnsresolverV1.ResolveRequest{
+		{Host: u.Hostname(), Port: int32(p), ExecutionId: "eid", CollectionRef: &configV1.ConfigRef{Kind: configV1.Kind_collection, Id: "col1"}},
 	}
+	//}
 
-	https, _ := isHttps(test.url)
+	//https, _ := isHttps(test.url)
 	r.BrowserControllerRequests = append(
-		generateBccNewRequests(test.url, !https),
+		generateBccNewRequests(test.url, false),
 		generateBccAllDataReceivedRequest(),
 		&browsercontrollerV1.DoRequest{
 			Action: &browsercontrollerV1.DoRequest_Completed{

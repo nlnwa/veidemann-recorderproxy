@@ -18,6 +18,7 @@ package recorderproxy
 
 import (
 	"crypto/tls"
+	errors3 "errors"
 	"github.com/getlantern/errors"
 	"github.com/getlantern/proxy/filters"
 	context2 "github.com/nlnwa/veidemann-recorderproxy/context"
@@ -65,22 +66,26 @@ func (f *ErrorHandlerFilter) Apply(ctx filters.Context, req *http.Request, next 
 func (f *ErrorHandlerFilter) normalizeError(err error, l *logger.Logger) error {
 	l = l.WithError(err)
 	l.Tracef("Normalize error (type: %T): %v", err, err)
-	switch e := err.(type) {
-	case *errors2.ProxyError:
-		return e
-	case *net.OpError:
-		return f.normalizeNetOpError(e, l)
-	case tls.RecordHeaderError:
-		return errors2.Wrap(&e, errors2.ConnectFailed, "CONNECT_FAILED", "tls: handshake failure")
-	case errors.Error:
-		return f.normalizeGetlanternProxyError(e, l)
+	var e1 *errors2.ProxyError
+	var e2 *net.OpError
+	var e3 tls.RecordHeaderError
+	var e4 errors.Error
+	switch {
+	case errors3.As(err, &e1):
+		return err
+	case errors3.As(err, &e2):
+		return f.normalizeNetOpError(e2, l)
+	case errors3.As(err, &e3):
+		return errors2.Wrap(&e3, errors2.ConnectFailed, "CONNECT_FAILED", "tls: handshake failure")
+	case errors3.As(err, &e4):
+		return f.normalizeGetlanternProxyError(e4, l)
 	default:
-		switch s := e.Error(); {
+		switch s := err.Error(); {
 		case s == "EOF":
-			return errors2.Wrap(e, errors2.EmptyResponse, "EMPTY_RESPONSE", "Empty reply from server")
+			return errors2.Wrap(err, errors2.EmptyResponse, "EMPTY_RESPONSE", "Empty reply from server")
 		default:
 			l.Debugf("Unknown error (type: %T): %v. Returning -5 UNKNOWN_ERROR", err, err)
-			return errors2.Wrap(e, errors2.RuntimeException, "UNKNOWN_ERROR", s)
+			return errors2.Wrap(err, errors2.RuntimeException, "UNKNOWN_ERROR", s)
 		}
 	}
 }
@@ -92,6 +97,8 @@ func (f *ErrorHandlerFilter) normalizeNetOpError(err *net.OpError, l *logger.Log
 	case "dial":
 		e = errors2.Wrap(err.Err, errors2.ConnectFailed, "CONNECT_FAILED", err.Err.Error())
 	case "remote error":
+		e = errors2.Wrap(err.Err, errors2.ConnectFailed, "CONNECT_FAILED", err.Err.Error())
+	case "local error":
 		e = errors2.Wrap(err.Err, errors2.ConnectFailed, "CONNECT_FAILED", err.Err.Error())
 	default:
 		l.Debugf("Unknown error operation (type: %T): %v. Returning -2 CONNECT_FAILED", err, err)
@@ -106,6 +113,14 @@ func (f *ErrorHandlerFilter) normalizeGetlanternProxyError(err errors.Error, l *
 	case *net.OpError:
 		return f.normalizeNetOpError(e, l)
 	default:
+		var e1 tls.RecordHeaderError
+		var e2 *net.OpError
+		if errors3.As(err.RootCause(), &e1) {
+			return errors2.Wrap(e, errors2.EmptyResponse, "EMPTY_RESPONSE", "Empty reply from server")
+		}
+		if errors3.As(err.RootCause(), &e2) {
+			return f.normalizeNetOpError(e2, l)
+		}
 		switch s := e.Error(); {
 		case s == "EOF":
 			return errors2.Wrap(e, errors2.EmptyResponse, "EMPTY_RESPONSE", "Empty reply from server")
