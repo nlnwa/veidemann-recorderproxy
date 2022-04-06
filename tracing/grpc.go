@@ -20,7 +20,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/nlnwa/veidemann-api/go/contentwriter/v1"
-	context2 "github.com/nlnwa/veidemann-recorderproxy/context"
+	"github.com/nlnwa/veidemann-recorderproxy/logger"
 	"github.com/opentracing/opentracing-go"
 	"github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
@@ -40,8 +40,12 @@ func NewStatsHandler(serviceName string, loglevel logrus.Level) grpc.DialOption 
 	}
 }
 
+func LogWithContext(componentName string) *logger.Logger {
+	return logger.Log.WithField("component", componentName)
+}
+
 func (h *sh) TagRPC(c context.Context, i *stats.RPCTagInfo) context.Context {
-	context2.LogWithContext(c, h.service).Debugf("TagRPC: %s %v", i.FullMethodName, i.FailFast)
+	LogWithContext(h.service).Debugf("TagRPC: %s %v", i.FullMethodName, i.FailFast)
 	return c
 }
 
@@ -49,15 +53,15 @@ func (h *sh) HandleRPC(c context.Context, s stats.RPCStats) {
 	span := opentracing.SpanFromContext(c)
 	switch v := s.(type) {
 	case *stats.Begin:
-		context2.LogWithContext(c, h.service).Debugf("Begin HandleRPC: %v", v.BeginTime)
+		LogWithContext(h.service).Debugf("Begin HandleRPC: %v", v.BeginTime)
 		span.LogKV("event", fmt.Sprintf("%s Begin", h.service))
 	case *stats.End:
-		context2.LogWithContext(c, h.service).Debugf("End HandleRPC: %v, %v, %v", v.BeginTime, v.EndTime, v.Error)
+		LogWithContext(h.service).Debugf("End HandleRPC: %v, %v, %v", v.BeginTime, v.EndTime, v.Error)
 		span.LogKV("event", fmt.Sprintf("%s End %v", h.service, v.Trailer))
 	case *stats.InHeader:
-		context2.LogWithContext(c, h.service).Debugf("InHeader HandleRPC: %v", v)
+		LogWithContext(h.service).Debugf("InHeader HandleRPC: %v", v)
 	case *stats.InPayload:
-		context2.LogWithContext(c, h.service).Debugf("InPayload HandleRPC: %T", v.Payload)
+		LogWithContext(h.service).Debugf("InPayload HandleRPC: %T", v.Payload)
 		span.LogKV(
 			"xx", fmt.Sprintf("%T", v.Payload),
 			"data", fmt.Sprintf("%v", v.Payload),
@@ -65,29 +69,29 @@ func (h *sh) HandleRPC(c context.Context, s stats.RPCStats) {
 			"direction", "in",
 		)
 	case *stats.InTrailer:
-		context2.LogWithContext(c, h.service).Debugf("InTrailer HandleRPC: %v", v)
+		LogWithContext(h.service).Debugf("InTrailer HandleRPC: %v", v)
 	case *stats.OutHeader:
-		context2.LogWithContext(c, h.service).Debugf("OutHeader HandleRPC: %v", v)
+		LogWithContext(h.service).Debugf("OutHeader HandleRPC: %v", v)
 	case *stats.OutPayload:
 		switch p := v.Payload.(type) {
 		//case *dnsresolver.ResolveRequest:
 		case *contentwriter.WriteRequest:
 			switch w := p.GetValue().(type) {
 			case *contentwriter.WriteRequest_Meta:
-				context2.LogWithContext(c, h.service).Debug(w.Meta)
+				LogWithContext(h.service).Debug(w.Meta)
 			case *contentwriter.WriteRequest_Payload:
 				if logrus.IsLevelEnabled(logrus.TraceLevel) {
-					context2.LogWithContext(c, h.service).Tracef("payload[%v]: %v", w.Payload.RecordNum, string(w.Payload.Data))
+					LogWithContext(h.service).Tracef("payload[%v]: %v", w.Payload.RecordNum, string(w.Payload.Data))
 				} else {
-					context2.LogWithContext(c, h.service).Debugf("payload[%v]: %v bytes", w.Payload.RecordNum, len(w.Payload.Data))
+					LogWithContext(h.service).Debugf("payload[%v]: %v bytes", w.Payload.RecordNum, len(w.Payload.Data))
 				}
 			case *contentwriter.WriteRequest_Cancel:
-				context2.LogWithContext(c, h.service).Debug(w.Cancel)
+				LogWithContext(h.service).Debug(w.Cancel)
 			case *contentwriter.WriteRequest_ProtocolHeader:
-				context2.LogWithContext(c, h.service).Debugf("header[%v]: %v", w.ProtocolHeader.RecordNum, string(w.ProtocolHeader.Data))
+				LogWithContext(h.service).Debugf("header[%v]: %v", w.ProtocolHeader.RecordNum, string(w.ProtocolHeader.Data))
 			}
 		default:
-			context2.LogWithContext(c, h.service).Debugf("OutPayload HandleRPC: %T", v.Payload)
+			LogWithContext(h.service).Debugf("OutPayload HandleRPC: %T", v.Payload)
 		}
 		span.LogKV(
 			"xx", fmt.Sprintf("%T", v.Payload),
@@ -96,24 +100,24 @@ func (h *sh) HandleRPC(c context.Context, s stats.RPCStats) {
 			"direction", "out",
 		)
 	case *stats.OutTrailer:
-		context2.LogWithContext(c, h.service).Debugf("OutTrailer HandleRPC: %v", v)
+		LogWithContext(h.service).Debugf("OutTrailer HandleRPC: %v", v)
 	default:
-		context2.LogWithContext(c, h.service).Debugf("HandleRPC: isclient %v %T", s.IsClient(), s)
+		LogWithContext(h.service).Debugf("HandleRPC: isclient %v %T", s.IsClient(), s)
 	}
 }
 
 func (h *sh) TagConn(c context.Context, i *stats.ConnTagInfo) context.Context {
-	context2.LogWithContext(c, h.service).Debugf("TagConn: %s --> %s\n", i.LocalAddr, i.RemoteAddr)
+	LogWithContext(h.service).Debugf("TagConn: %s --> %s\n", i.LocalAddr, i.RemoteAddr)
 	return c
 }
 
 func (h *sh) HandleConn(c context.Context, s stats.ConnStats) {
 	switch v := s.(type) {
 	case *stats.ConnBegin:
-		context2.LogWithContext(c, h.service).Debugf("Begin HandleConn: isclient %v", v.IsClient())
+		LogWithContext(h.service).Debugf("Begin HandleConn: isclient %v", v.IsClient())
 	case *stats.ConnEnd:
-		context2.LogWithContext(c, h.service).Debugf("End HandleConn: isclient %v", v.IsClient())
+		LogWithContext(h.service).Debugf("End HandleConn: isclient %v", v.IsClient())
 	default:
-		context2.LogWithContext(c, h.service).Debugf("HandleConn: isclient %v %T", s.IsClient(), s)
+		LogWithContext(h.service).Debugf("HandleConn: isclient %v %T", s.IsClient(), s)
 	}
 }

@@ -23,8 +23,8 @@ import (
 	"fmt"
 	gerr "github.com/getlantern/errors"
 	"github.com/getlantern/mitm"
-	"github.com/getlantern/proxy"
-	"github.com/getlantern/proxy/filters"
+	"github.com/nlnwa/veidemann-recorderproxy/filters"
+	"github.com/nlnwa/veidemann-recorderproxy/proxy"
 	"log"
 	"net"
 	"net/http"
@@ -38,7 +38,7 @@ var acceptAllCerts = &tls.Config{InsecureSkipVerify: true}
 
 func NewSecondaryProxy(s *HttpServers) (net.Listener, string) {
 	var ff filters.FilterFunc
-	ff = func(ctx filters.Context, req *http.Request, next filters.Next) (r *http.Response, c filters.Context, e error) {
+	ff = func(ctx *filters.ConnectionState, req *http.Request, next filters.Next) (r *http.Response, c *filters.ConnectionState, e error) {
 		r, c, e = next(ctx, req)
 		if e != nil && r != nil && r.StatusCode == 502 && strings.Contains(e.Error(), "connection refused") {
 			r, c, e = filters.Fail(ctx, req, http.StatusServiceUnavailable, e)
@@ -49,7 +49,7 @@ func NewSecondaryProxy(s *HttpServers) (net.Listener, string) {
 	var downstreamConn net.Conn
 
 	opts := &proxy.Opts{
-		OnError: func(ctx filters.Context, req *http.Request, read bool, err error) (r *http.Response) {
+		OnError: func(ctx *filters.ConnectionState, req *http.Request, read bool, err error) (r *http.Response) {
 			var eofRegex = regexp.MustCompile("Unable to round-trip .*: EOF")
 			fmt.Printf("SECOND PROXY ERR: %v %v %v\n", req, read, err)
 			switch s := err.Error(); {
@@ -88,7 +88,7 @@ func NewSecondaryProxy(s *HttpServers) (net.Listener, string) {
 			Organization:    "Veidemann Recorder Proxy",
 			CertFile:        "/tmp/rpcert.pem",
 		},
-		Dial: func(context context.Context, isConnect bool, network, addr string) (conn net.Conn, err error) {
+		Dial: func(context context.Context, cs *filters.ConnectionState, isConnect bool, network, addr string) (conn net.Conn, err error) {
 			timeout := 30 * time.Second
 			deadline, hasDeadline := context.Deadline()
 			if hasDeadline {

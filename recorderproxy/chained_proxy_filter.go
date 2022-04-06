@@ -17,8 +17,7 @@
 package recorderproxy
 
 import (
-	"github.com/getlantern/proxy/filters"
-	context2 "github.com/nlnwa/veidemann-recorderproxy/context"
+	"github.com/nlnwa/veidemann-recorderproxy/filters"
 	"github.com/opentracing/opentracing-go"
 	"github.com/opentracing/opentracing-go/log"
 	"net/http"
@@ -30,23 +29,21 @@ type ChainedProxyFilter struct {
 	proxy *RecorderProxy
 }
 
-func (f *ChainedProxyFilter) Apply(ctx filters.Context, req *http.Request, next filters.Next) (resp *http.Response, context filters.Context, err error) {
-	l := context2.LogWithContextAndRequest(ctx, req, "FLT:chain")
-	span := opentracing.SpanFromContext(ctx)
+func (f *ChainedProxyFilter) Apply(cs *filters.ConnectionState, req *http.Request, next filters.Next) (*http.Response, *filters.ConnectionState, error) {
+	l := cs.LogWithContextAndRequest(req, "FLT:chain")
+	span := opentracing.SpanFromContext(req.Context())
 
 	if req.Method == http.MethodConnect {
-		resp, context, err = next(ctx, req)
+		return next(cs, req)
 	} else {
-		if context2.GetHost(ctx) == "" || (f.proxy.nextProxy != "" && !ctx.IsMITMing()) {
+		if cs.Host == "" || (f.proxy.nextProxy != "" && !cs.IsMITMing()) {
 			span.LogFields(log.String("event", "Rewrite request"))
-			rc := context2.GetRecordContext(ctx)
-			uri, err := url.Parse("http:" + rc.Uri.String())
+			uri, err := url.Parse("http:" + cs.Uri.String())
 			if err != nil {
-				l.WithError(err).Warnf("Error parsing uri for chained proxy: %v", "http:"+rc.Uri.String())
+				l.WithError(err).Warnf("Error parsing uri for chained proxy: %v", "http:"+cs.Uri.String())
 			}
 			req.URL = uri
 		}
-		resp, context, err = next(ctx, req)
+		return next(cs, req)
 	}
-	return
 }

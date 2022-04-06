@@ -296,7 +296,6 @@ func TestRecorderProxy(t *testing.T) {
 
 			fmt.Printf("Request %v\n", tt.url)
 			statusCode, got, err := get(tt.url, env.client, tt.clientTimeout)
-			fmt.Println("GET", statusCode, string(got), err)
 			if env.grpcServices.DoneBC != nil {
 				<-env.grpcServices.DoneBC
 			}

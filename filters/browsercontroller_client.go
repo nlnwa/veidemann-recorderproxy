@@ -14,13 +14,12 @@
  * limitations under the License.
  */
 
-package context
+package filters
 
 import (
 	"context"
 	errors2 "errors"
 	"fmt"
-	"github.com/getlantern/proxy/filters"
 	"github.com/nlnwa/veidemann-api/go/browsercontroller/v1"
 	logV1 "github.com/nlnwa/veidemann-api/go/log/v1"
 	"github.com/nlnwa/veidemann-recorderproxy/constants"
@@ -62,22 +61,24 @@ type doneMsg struct {
 	err  error
 }
 
-func (rc *RecordContext) getBccSession() (*BccSession, error) {
-	if rc.bcc != nil {
-		return rc.bcc, nil
+func (cs *ConnectionState) getBccSession() (*BccSession, error) {
+	if cs.bcc != nil {
+		return cs.bcc, nil
 	}
 
-	l := LogWithContext(rc.ctx, "PROXY:BCC")
+	l := cs.LogWithContext("PROXY:BCC")
 
-	rc.mutex.Lock()
-	defer rc.mutex.Unlock()
+	cs.mutex.Lock()
+	defer cs.mutex.Unlock()
 
-	parentSpan := opentracing.SpanFromContext(rc.ctx)
-	span := opentracing.StartSpan("Browser controller session", opentracing.FollowsFrom(parentSpan.Context()))
+	//cs.ctx = context.TODO()
+	//parentSpan := opentracing.SpanFromContext(cs.ctx)
+	//span := opentracing.StartSpan("Browser controller session", opentracing.FollowsFrom(parentSpan.Context()))
+	span := opentracing.StartSpan("Browser controller session")
 	bccCtx, cancel := context.WithCancel(context.Background())
 	bccCtx = opentracing.ContextWithSpan(bccCtx, span)
 
-	bcc, err := rc.conn.BrowserControllerClient().Do(bccCtx)
+	bcc, err := cs.conn.BrowserControllerClient().Do(bccCtx)
 	if err != nil {
 		l.WithError(err).Warn("Error connecting to browser controller")
 		span.LogFields(otLog.String("event", "Failed starting BrowserControllerClient session"), otLog.Error(err))
@@ -95,54 +96,51 @@ func (rc *RecordContext) getBccSession() (*BccSession, error) {
 	finish := func(resp *http.Response) {
 		b.m.Lock()
 		defer b.m.Unlock()
-		if GetRecordContext(rc.ctx) != nil {
-			var clStatusCode int32
-			if b.complete != nil {
-				if b.complete.err != nil {
-					l.WithError(b.complete.err).Info("Session completed with error")
-				}
-
-				clStatusCode = b.complete.cl.StatusCode
-				err := rc.saveCrawlLogUnlocked(b, b.complete.cl)
-
-				if err != nil {
-					l.WithError(err).Warn("Error writing to browser controller")
-				}
-
-				b.span.Finish()
-			} else {
-				l.Info("Browser controller client session canceled by client")
-
-				clStatusCode = int32(errors.CanceledByBrowser)
-				rc.CrawlLog.StatusCode = int32(errors.CanceledByBrowser)
-				rc.CrawlLog.RecordType = constants.RecordResponse
-				rc.CrawlLog.ContentType = ""
-				e := errors.Error(errors.CanceledByBrowser, "CANCELED_BY_BROWSER", "Veidemann recorder proxy lost connection to client")
-				rc.CrawlLog.Error = errors.AsCommonsError(e)
-
-				err := rc.saveCrawlLogUnlocked(b, rc.CrawlLog)
-
-				if err != nil {
-					l.WithError(err).Warn("Error writing to browser controller")
-				}
-
-				b.span.Finish()
+		var clStatusCode int32
+		if b.complete != nil {
+			if b.complete.err != nil {
+				l.WithError(b.complete.err).Info("Session completed with error")
 			}
-			SetRecordContext(rc.ctx, nil)
-			atomic.AddInt64(&closedSess, 1)
-			l := rc.log.WithField("clStatusCode", clStatusCode)
-			if resp != nil {
-				l = l.WithField("statusCode", resp.StatusCode)
+
+			clStatusCode = b.complete.cl.StatusCode
+			err := cs.saveCrawlLogUnlocked(b, b.complete.cl)
+
+			if err != nil {
+				l.WithError(err).Warn("Error writing to browser controller")
 			}
-			l.Infof("Session completed")
-			cancel()
+
+			b.span.Finish()
+		} else {
+			l.Info("Browser controller client session canceled by client")
+
+			clStatusCode = int32(errors.CanceledByBrowser)
+			cs.CrawlLog.StatusCode = int32(errors.CanceledByBrowser)
+			cs.CrawlLog.RecordType = constants.RecordResponse
+			cs.CrawlLog.ContentType = ""
+			e := errors.Error(errors.CanceledByBrowser, "CANCELED_BY_BROWSER", "Veidemann recorder proxy lost connection to client")
+			cs.CrawlLog.Error = errors.AsCommonsError(e)
+
+			err := cs.saveCrawlLogUnlocked(b, cs.CrawlLog)
+
+			if err != nil {
+				l.WithError(err).Warn("Error writing to browser controller")
+			}
+
+			b.span.Finish()
 		}
+		atomic.AddInt64(&closedSess, 1)
+		l := cs.log.WithField("clStatusCode", clStatusCode)
+		if resp != nil {
+			l = l.WithField("statusCode", resp.StatusCode)
+		}
+		l.Infof("Session completed")
+		cancel()
 	}
 
 	go func() {
 		for {
 			select {
-			case <-rc.ctx.Done():
+			case <-cs.ctx.Done():
 				finish(nil)
 				return
 			case doneMsg := <-b.done:
@@ -196,8 +194,8 @@ func (rc *RecordContext) getBccSession() (*BccSession, error) {
 			}
 			if err != nil {
 				l.Warnf("unknown error from browser controller %v, %v, %v\n", doReply, err, serr)
-				rc.Error = fmt.Errorf("unknown error from browser controller: %v", err.Error())
-				b.msgChan <- &browsercontroller.DoReply{Action: &browsercontroller.DoReply_Cancel{Cancel: rc.Error.Error()}}
+				cs.Error = fmt.Errorf("unknown error from browser controller: %v", err.Error())
+				b.msgChan <- &browsercontroller.DoReply{Action: &browsercontroller.DoReply_Cancel{Cancel: cs.Error.Error()}}
 				close(b.msgChan)
 				return
 			}
@@ -207,15 +205,15 @@ func (rc *RecordContext) getBccSession() (*BccSession, error) {
 					b.msgChan <- doReply
 				} else {
 					l.Info("Browser controller client session canceled by browser controller")
-					_ = rc.CancelContentWriter("canceled by browser controller")
+					_ = cs.CancelContentWriter("canceled by browser controller")
 
-					rc.CrawlLog.StatusCode = int32(errors.CanceledByBrowser)
-					rc.CrawlLog.RecordType = constants.RecordResponse
-					rc.CrawlLog.ContentType = ""
+					cs.CrawlLog.StatusCode = int32(errors.CanceledByBrowser)
+					cs.CrawlLog.RecordType = constants.RecordResponse
+					cs.CrawlLog.ContentType = ""
 					e := errors.Error(errors.CanceledByBrowser, "CANCELED_BY_BROWSER", "canceled by browser controller")
-					rc.CrawlLog.Error = errors.AsCommonsError(e)
+					cs.CrawlLog.Error = errors.AsCommonsError(e)
 
-					cl := *rc.CrawlLog
+					cl := *cs.CrawlLog
 					msg := &completeMsg{cl: &cl, err: e}
 					b.completeChan <- msg
 				}
@@ -225,35 +223,35 @@ func (rc *RecordContext) getBccSession() (*BccSession, error) {
 		}
 	}()
 
-	rc.bcc = b
+	cs.bcc = b
 	span.LogFields(otLog.String("event", "Started BrowserControllerClient session"))
 	return b, nil
 }
 
-func (rc *RecordContext) ResponseCompleted(resp *http.Response, writeErr error) {
-	if b, err := rc.getBccSession(); err == nil {
+func (cs *ConnectionState) ResponseCompleted(resp *http.Response, writeErr error) {
+	if b, err := cs.getBccSession(); err == nil {
 		b.done <- &doneMsg{resp: resp, err: err}
 	}
 	if writeErr != nil {
-		rc.CancelContentWriter("Veidemann recorder proxy lost connection to client")
+		cs.CancelContentWriter("Veidemann recorder proxy lost connection to client")
 	}
 }
 
-func (rc *RecordContext) WaitForCompleted() {
-	if rc.cwc != nil {
+func (cs *ConnectionState) WaitForCompleted() {
+	if cs.cwc != nil {
 		select {
-		case <-rc.cwc.cwcCtx.Done():
+		case <-cs.cwc.cwcCtx.Done():
 		}
 	}
-	if rc.bcc != nil {
+	if cs.bcc != nil {
 		select {
-		case <-rc.bcc.bccCtx.Done():
+		case <-cs.bcc.bccCtx.Done():
 		}
 	}
 }
 
-func (rc *RecordContext) SaveCrawlLog() error {
-	b, err := rc.getBccSession()
+func (cs *ConnectionState) SaveCrawlLog() error {
+	b, err := cs.getBccSession()
 	if err != nil {
 		return err
 	}
@@ -265,24 +263,24 @@ func (rc *RecordContext) SaveCrawlLog() error {
 		return AlreadyCompleted
 	}
 
-	cl := *rc.CrawlLog
+	cl := *cs.CrawlLog
 	msg := &completeMsg{cl: &cl}
 	b.completeChan <- msg
 	return nil
 }
 
-func (rc *RecordContext) saveCrawlLogUnlocked(b *BccSession, cl *logV1.CrawlLog) (err error) {
-	l := LogWithContext(rc.ctx, "PROXY:BCC")
+func (cs *ConnectionState) saveCrawlLogUnlocked(b *BccSession, cl *logV1.CrawlLog) (err error) {
+	l := cs.LogWithContext("PROXY:BCC")
 
-	fetchDurationMs := time.Now().Sub(rc.FetchTimesTamp).Nanoseconds() / 1000000
+	fetchDurationMs := time.Now().Sub(cs.FetchTimesTamp).Nanoseconds() / 1000000
 	cl.FetchTimeMs = fetchDurationMs
-	cl.IpAddress = GetIp(rc.ctx)
+	cl.IpAddress = cs.Ip
 
 	err = b.BrowserController_DoClient.Send(&browsercontroller.DoRequest{
 		Action: &browsercontroller.DoRequest_Completed{
 			Completed: &browsercontroller.Completed{
 				CrawlLog: cl,
-				Cached:   rc.FoundInCache,
+				Cached:   cs.FoundInCache,
 			},
 		},
 	})
@@ -300,14 +298,14 @@ func (rc *RecordContext) saveCrawlLogUnlocked(b *BccSession, cl *logV1.CrawlLog)
 	return err
 }
 
-func (rc *RecordContext) SendRequestError(ctx filters.Context, reqErr error) error {
-	l := LogWithContext(rc.ctx, "PROXY:BCC")
+func (cs *ConnectionState) SendRequestError(reqErr error) error {
+	l := cs.LogWithContext("PROXY:BCC")
 
 	if reqErr == nil {
 		l.Panic("BUG: SendRequestError with nil error")
 	}
 
-	b, err := rc.getBccSession()
+	b, err := cs.getBccSession()
 	if err != nil {
 		return err
 	} else {
@@ -321,7 +319,7 @@ func (rc *RecordContext) SendRequestError(ctx filters.Context, reqErr error) err
 		}
 	}
 
-	err = rc.NotifyAllDataReceived()
+	err = cs.NotifyAllDataReceived()
 	if err != nil {
 		return errors.WrapInternalError(err, errors.RuntimeException, "error notifying browser controller", err.Error())
 	}
@@ -333,24 +331,24 @@ func (rc *RecordContext) SendRequestError(ctx filters.Context, reqErr error) err
 		return errors.WrapInternalError(AlreadyCompleted, errors.RuntimeException, "error sending crawl log to browser controller", AlreadyCompleted.Error())
 	}
 
-	rc.CrawlLog.StatusCode = int32(errors.Code(reqErr))
-	rc.CrawlLog.RecordType = constants.RecordResponse
-	rc.CrawlLog.Error = errors.AsCommonsError(reqErr)
+	cs.CrawlLog.StatusCode = int32(errors.Code(reqErr))
+	cs.CrawlLog.RecordType = constants.RecordResponse
+	cs.CrawlLog.Error = errors.AsCommonsError(reqErr)
 
-	cl := *rc.CrawlLog
+	cl := *cs.CrawlLog
 	msg := &completeMsg{cl: &cl, err: reqErr}
 	b.completeChan <- msg
 	return reqErr
 }
 
-func (rc *RecordContext) SendResponseError(ctx filters.Context, respErr error) error {
-	l := LogWithContext(rc.ctx, "PROXY:BCC")
+func (cs *ConnectionState) SendResponseError(respErr error) error {
+	l := cs.LogWithContext("PROXY:BCC")
 
 	if respErr == nil {
 		l.Panic("BUG: SendResponseError with nil error")
 	}
 
-	b, err := rc.getBccSession()
+	b, err := cs.getBccSession()
 	if err != nil {
 		return err
 	}
@@ -362,24 +360,24 @@ func (rc *RecordContext) SendResponseError(ctx filters.Context, respErr error) e
 		return errors.WrapInternalError(AlreadyCompleted, errors.RuntimeException, "error sending crawl log to browser controller", AlreadyCompleted.Error())
 	}
 
-	rc.CrawlLog.StatusCode = int32(errors.Code(respErr))
-	rc.CrawlLog.RecordType = constants.RecordResponse
-	rc.CrawlLog.ContentType = ""
-	rc.CrawlLog.Error = errors.AsCommonsError(respErr)
+	cs.CrawlLog.StatusCode = int32(errors.Code(respErr))
+	cs.CrawlLog.RecordType = constants.RecordResponse
+	cs.CrawlLog.ContentType = ""
+	cs.CrawlLog.Error = errors.AsCommonsError(respErr)
 
-	cl := *rc.CrawlLog
+	cl := *cs.CrawlLog
 	msg := &completeMsg{cl: &cl, err: respErr}
 	b.completeChan <- msg
 	return respErr
 }
 
-func (rc *RecordContext) RegisterNewRequest(ctx filters.Context) error {
-	b, err := rc.getBccSession()
+func (cs *ConnectionState) RegisterNewRequest() error {
+	b, err := cs.getBccSession()
 	if err != nil {
 		return err
 	}
 
-	l := LogWithContext(rc.ctx, "PROXY:BCC")
+	l := cs.LogWithContext("PROXY:BCC")
 
 	b.m.Lock()
 	defer b.m.Unlock()
@@ -391,27 +389,27 @@ func (rc *RecordContext) RegisterNewRequest(ctx filters.Context) error {
 	bccRequest := &browsercontroller.DoRequest{
 		Action: &browsercontroller.DoRequest_New{
 			New: &browsercontroller.RegisterNew{
-				ProxyId:          rc.ProxyId,
-				Method:           rc.Method,
-				Uri:              rc.Uri.String(),
-				RequestId:        GetRequestId(rc.ctx),
-				CrawlExecutionId: GetCrawlExecutionId(rc.ctx),
-				JobExecutionId:   GetJobExecutionId(rc.ctx),
-				CollectionRef:    GetCollectionRef(rc.ctx),
+				ProxyId:          cs.ProxyId,
+				Method:           cs.Method,
+				Uri:              cs.Uri.String(),
+				RequestId:        cs.RequestId,
+				CrawlExecutionId: cs.CrawlExecId,
+				JobExecutionId:   cs.JobExecId,
+				CollectionRef:    cs.CollectionRef,
 			},
 		},
 	}
 
 	lf := []otLog.Field{
 		otLog.String("event", "Send BrowserController New request"),
-		otLog.Int32("ProxyId", rc.ProxyId),
-		otLog.String("Uri", rc.Uri.String()),
-		otLog.String("RequestId", GetRequestId(rc.ctx)),
-		otLog.String("CrawlExecutionId", GetCrawlExecutionId(rc.ctx)),
-		otLog.String("JobExecutionId", GetJobExecutionId(rc.ctx)),
+		otLog.Int32("ProxyId", cs.ProxyId),
+		otLog.String("Uri", cs.Uri.String()),
+		otLog.String("RequestId", cs.RequestId),
+		otLog.String("CrawlExecutionId", cs.CrawlExecId),
+		otLog.String("JobExecutionId", cs.JobExecId),
 	}
-	if GetCollectionRef(rc.ctx) != nil {
-		lf = append(lf, otLog.String("CollectionId", GetCollectionRef(rc.ctx).Id))
+	if cs.CollectionRef != nil {
+		lf = append(lf, otLog.String("CollectionId", cs.CollectionRef.Id))
 	} else {
 		lf = append(lf, otLog.String("CollectionId", ""))
 	}
@@ -430,7 +428,7 @@ func (rc *RecordContext) RegisterNewRequest(ctx filters.Context) error {
 	switch v := bcReply.Action.(type) {
 	case *browsercontroller.DoReply_Cancel:
 		if v.Cancel == "Blocked by robots.txt" {
-			rc.PrecludedByRobots = true
+			cs.PrecludedByRobots = true
 		}
 		b.span.LogKV("event", "ResponseFromNew", "responseType", "Cancel")
 		return errors.Error(errors.PrecludedByRobots, "PRECLUDED_BY_ROBOTS", "Robots.txt rules precluded fetch")
@@ -441,33 +439,33 @@ func (rc *RecordContext) RegisterNewRequest(ctx filters.Context) error {
 			"CollectionId", v.New.CollectionRef.Id,
 			"ReplacementScript", v.New.ReplacementScript,
 		)
-		SetJobExecutionId(rc.ctx, v.New.JobExecutionId)
-		SetCrawlExecutionId(rc.ctx, v.New.CrawlExecutionId)
-		SetCollectionRef(rc.ctx, v.New.CollectionRef)
-		rc.ReplacementScript = v.New.ReplacementScript
+		cs.JobExecId = v.New.JobExecutionId
+		cs.CrawlExecId = v.New.CrawlExecutionId
+		cs.CollectionRef = v.New.CollectionRef
+		cs.ReplacementScript = v.New.ReplacementScript
 
-		rc.CrawlLog.JobExecutionId = GetJobExecutionId(rc.ctx)
-		rc.CrawlLog.ExecutionId = GetCrawlExecutionId(rc.ctx)
+		cs.CrawlLog.JobExecutionId = cs.JobExecId
+		cs.CrawlLog.ExecutionId = cs.CrawlExecId
 	}
 
 	return nil
 }
 
-func (rc *RecordContext) NotifyDataReceived() error {
-	return rc.notifyDataReceived(browsercontroller.NotifyActivity_DATA_RECEIVED)
+func (cs *ConnectionState) NotifyDataReceived() error {
+	return cs.notifyDataReceived(browsercontroller.NotifyActivity_DATA_RECEIVED)
 }
 
-func (rc *RecordContext) NotifyAllDataReceived() error {
-	return rc.notifyDataReceived(browsercontroller.NotifyActivity_ALL_DATA_RECEIVED)
+func (cs *ConnectionState) NotifyAllDataReceived() error {
+	return cs.notifyDataReceived(browsercontroller.NotifyActivity_ALL_DATA_RECEIVED)
 }
 
-func (rc *RecordContext) notifyDataReceived(activity browsercontroller.NotifyActivity_Activity) error {
-	b, err := rc.getBccSession()
+func (cs *ConnectionState) notifyDataReceived(activity browsercontroller.NotifyActivity_Activity) error {
+	b, err := cs.getBccSession()
 	if err != nil {
 		return err
 	}
 
-	l := LogWithContext(rc.ctx, "PROXY:BCC")
+	l := cs.LogWithContext("PROXY:BCC")
 
 	b.m.Lock()
 	defer b.m.Unlock()
@@ -492,10 +490,10 @@ func (rc *RecordContext) notifyDataReceived(activity browsercontroller.NotifyAct
 	return err
 }
 
-func RegisterConnectRequest(ctx filters.Context, conn *serviceconnections.Connections, proxyId int32, req *http.Request, uri *url.URL) {
-	l := LogWithContext(ctx, "PROXY:BCC")
+func (cs *ConnectionState) RegisterConnectRequest(conn *serviceconnections.Connections, proxyId int32, req *http.Request, uri *url.URL) {
+	l := cs.LogWithContext("PROXY:BCC")
 
-	resolveIdsFromHttpHeader(ctx, req)
+	//resolveIdsFromHttpHeader(ctx, req)
 
 	bccRequest := &browsercontroller.DoRequest{
 		Action: &browsercontroller.DoRequest_New{
@@ -503,10 +501,10 @@ func RegisterConnectRequest(ctx filters.Context, conn *serviceconnections.Connec
 				ProxyId:          proxyId,
 				Method:           "CONNECT",
 				Uri:              uri.String(),
-				RequestId:        GetRequestId(ctx),
-				CrawlExecutionId: GetCrawlExecutionId(ctx),
-				JobExecutionId:   GetJobExecutionId(ctx),
-				CollectionRef:    GetCollectionRef(ctx),
+				RequestId:        cs.RequestId,
+				CrawlExecutionId: cs.CrawlExecId,
+				JobExecutionId:   cs.JobExecId,
+				CollectionRef:    cs.CollectionRef,
 			},
 		},
 	}
@@ -531,9 +529,9 @@ func RegisterConnectRequest(ctx filters.Context, conn *serviceconnections.Connec
 	} else {
 		switch v := doReply.Action.(type) {
 		case *browsercontroller.DoReply_New:
-			SetJobExecutionId(ctx, v.New.JobExecutionId)
-			SetCrawlExecutionId(ctx, v.New.CrawlExecutionId)
-			SetCollectionRef(ctx, v.New.CollectionRef)
+			cs.JobExecId = v.New.JobExecutionId
+			cs.CrawlExecId = v.New.CrawlExecutionId
+			cs.CollectionRef = v.New.CollectionRef
 		}
 	}
 	_ = bcc.CloseSend()

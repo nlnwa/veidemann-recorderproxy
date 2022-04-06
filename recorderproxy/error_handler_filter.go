@@ -20,9 +20,8 @@ import (
 	"crypto/tls"
 	errors3 "errors"
 	"github.com/getlantern/errors"
-	"github.com/getlantern/proxy/filters"
-	context2 "github.com/nlnwa/veidemann-recorderproxy/context"
 	errors2 "github.com/nlnwa/veidemann-recorderproxy/errors"
+	"github.com/nlnwa/veidemann-recorderproxy/filters"
 	"github.com/nlnwa/veidemann-recorderproxy/logger"
 	"net"
 	"net/http"
@@ -33,34 +32,33 @@ type ErrorHandlerFilter struct {
 	hasNextProxy bool
 }
 
-func (f *ErrorHandlerFilter) Apply(ctx filters.Context, req *http.Request, next filters.Next) (resp *http.Response, context filters.Context, err error) {
-	l := context2.LogWithContextAndRequest(ctx, req, "FLT:err")
+func (f *ErrorHandlerFilter) Apply(cs *filters.ConnectionState, req *http.Request, next filters.Next) (*http.Response, *filters.ConnectionState, error) {
+	l := cs.LogWithContextAndRequest(req, "FLT:err")
 
-	connectErr := context2.GetConnectError(ctx)
-	if connectErr != nil {
-		l.WithError(connectErr).WithField("method", req.Method).Debug("Handle connect error")
-		e := f.normalizeError(connectErr, l)
-		return handleRequestError(ctx, req, e)
+	if cs.ConnectErr != nil {
+		l.WithError(cs.ConnectErr).WithField("method", req.Method).Debug("Handle connect error")
+		e := f.normalizeError(cs.ConnectErr, l)
+		return handleRequestError(cs, req, e)
 	}
 
-	resp, context, err = next(ctx, req)
+	resp, cs, err := next(cs, req)
 
 	if err != nil {
 		l.WithError(err).Debug("Handle roundtrip error")
 
 		e := f.normalizeError(err, l)
-		return handleRequestError(ctx, req, e)
+		return handleRequestError(cs, req, e)
 	}
 
 	squidErr := resp.Header.Get("X-Squid-Error")
 	if squidErr != "" {
 		e := handleSquidErrorString(squidErr)
 		if e != nil {
-			return handleRequestError(ctx, req, e)
+			return handleRequestError(cs, req, e)
 		}
 	}
 
-	return
+	return resp, cs, err
 }
 
 func (f *ErrorHandlerFilter) normalizeError(err error, l *logger.Logger) error {

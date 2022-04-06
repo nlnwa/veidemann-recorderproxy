@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package context
+package filters
 
 import (
 	"context"
@@ -36,22 +36,23 @@ type CwcSession struct {
 	ctxCancel context.CancelFunc
 }
 
-func (rc *RecordContext) getCwcSession() (*CwcSession, error) {
-	if rc.cwc != nil {
-		return rc.cwc, nil
+func (cs *ConnectionState) getCwcSession() (*CwcSession, error) {
+	if cs.cwc != nil {
+		return cs.cwc, nil
 	}
 
-	l := LogWithContext(rc.ctx, "PROXY:CWC")
+	l := cs.LogWithContext("PROXY:CWC")
 
-	rc.mutex.Lock()
-	defer rc.mutex.Unlock()
+	cs.mutex.Lock()
+	defer cs.mutex.Unlock()
 
-	parentSpan := opentracing.SpanFromContext(rc.ctx)
-	span := opentracing.StartSpan("ContentWriter session", opentracing.FollowsFrom(parentSpan.Context()))
+	//parentSpan := opentracing.SpanFromContext(cs.ctx)
+	//span := opentracing.StartSpan("ContentWriter session", opentracing.FollowsFrom(parentSpan.Context()))
+	span := opentracing.StartSpan("ContentWriter session")
 	cwcCtx, cancel := context.WithCancel(context.Background())
 	cwcCtx = opentracing.ContextWithSpan(cwcCtx, span)
 
-	cwc, err := rc.conn.ContentWriterClient().Write(cwcCtx)
+	cwc, err := cs.conn.ContentWriterClient().Write(cwcCtx)
 	span.LogFields(otLog.String("event", "Started ContentWriter client session"), otLog.Error(err))
 	if err != nil {
 		l.WithError(err).Warn("Error connecting to ContentWriter")
@@ -65,19 +66,19 @@ func (rc *RecordContext) getCwcSession() (*CwcSession, error) {
 
 	go func() {
 		select {
-		case <-rc.ctx.Done():
+		case <-cs.ctx.Done():
 			c.m.Lock()
 			defer c.m.Unlock()
 			if !c.done {
 				c.done = true
 				l.Info("ContentWriter client session canceled by client")
-				err := rc.cwc.Send(&contentwriter.WriteRequest{
+				err := cs.cwc.Send(&contentwriter.WriteRequest{
 					Value: &contentwriter.WriteRequest_Cancel{Cancel: "Veidemann recorder proxy lost connection to client"},
 				})
 				if err != nil {
 					l.WithError(err).Warn("Error writing to ContentWriter")
 				}
-				_, err = rc.cwc.CloseAndRecv()
+				_, err = cs.cwc.CloseAndRecv()
 				if err != nil {
 					l.WithError(err).Warn("Error closing from ContentWriter")
 				}
@@ -87,20 +88,20 @@ func (rc *RecordContext) getCwcSession() (*CwcSession, error) {
 		}
 	}()
 
-	rc.cwc = c
+	cs.cwc = c
 	span.LogFields(otLog.String("event", "Started ContentWriter session"))
 	return c, nil
 }
 
-func (rc *RecordContext) CancelContentWriter(msg string) error {
-	if rc.cwc == nil {
+func (cs *ConnectionState) CancelContentWriter(msg string) error {
+	if cs.cwc == nil {
 		// No ContentWriter session to cancel
 		return nil
 	}
 
-	l := LogWithContext(rc.ctx, "PROXY:CWC")
+	l := cs.LogWithContext("PROXY:CWC")
 
-	cwc, err := rc.getCwcSession()
+	cwc, err := cs.getCwcSession()
 	cwc.canceled = true
 	if err != nil {
 		cwc.span.LogFields(otLog.String("event", "Cancel content writer"), otLog.String("message", msg), otLog.Error(err))
@@ -129,13 +130,13 @@ func (rc *RecordContext) CancelContentWriter(msg string) error {
 	return err
 }
 
-func (rc *RecordContext) SendProtocolHeader(recNum int32, p []byte) error {
-	l := LogWithContext(rc.ctx, "PROXY:CWC")
+func (cs *ConnectionState) SendProtocolHeader(recNum int32, p []byte) error {
+	l := cs.LogWithContext("PROXY:CWC")
 
 	otEvent := otLog.String("event", "sendProtocolHeader")
 	otRecNum := otLog.Int32("recNum", recNum)
 
-	cwc, err := rc.getCwcSession()
+	cwc, err := cs.getCwcSession()
 	if err != nil {
 		cwc.span.LogFields(otEvent, otRecNum, otLog.Error(err))
 		return err
@@ -164,13 +165,13 @@ func (rc *RecordContext) SendProtocolHeader(recNum int32, p []byte) error {
 	return err
 }
 
-func (rc *RecordContext) SendPayload(recNum int32, p []byte) error {
-	l := LogWithContext(rc.ctx, "PROXY:CWC")
+func (cs *ConnectionState) SendPayload(recNum int32, p []byte) error {
+	l := cs.LogWithContext("PROXY:CWC")
 
 	otEvent := otLog.String("event", "sendPayload")
 	otRecNum := otLog.Int32("recNum", recNum)
 
-	cwc, err := rc.getCwcSession()
+	cwc, err := cs.getCwcSession()
 	if err != nil {
 		cwc.span.LogFields(otEvent, otRecNum, otLog.Error(err))
 		return err
@@ -199,12 +200,12 @@ func (rc *RecordContext) SendPayload(recNum int32, p []byte) error {
 	return err
 }
 
-func (rc *RecordContext) SendMeta() (reply *contentwriter.WriteReply, err error) {
-	l := LogWithContext(rc.ctx, "PROXY:CWC")
+func (cs *ConnectionState) SendMeta() (reply *contentwriter.WriteReply, err error) {
+	l := cs.LogWithContext("PROXY:CWC")
 
-	cwc, err := rc.getCwcSession()
+	cwc, err := cs.getCwcSession()
 	if err != nil {
-		cwc.span.LogFields(otLog.String("event", "sendMeta"), otLog.String("http.url", rc.Meta.Meta.TargetUri), otLog.Error(err))
+		cwc.span.LogFields(otLog.String("event", "sendMeta"), otLog.String("http.url", cs.Meta.Meta.TargetUri), otLog.Error(err))
 		return nil, err
 	}
 
@@ -220,11 +221,11 @@ func (rc *RecordContext) SendMeta() (reply *contentwriter.WriteReply, err error)
 
 		sendMetaSpan := opentracing.StartSpan("ContentWriter sendMeta", opentracing.ChildOf(cwc.span.Context()))
 		defer sendMetaSpan.Finish()
-		ext.HTTPUrl.Set(sendMetaSpan, rc.Meta.Meta.TargetUri)
+		ext.HTTPUrl.Set(sendMetaSpan, cs.Meta.Meta.TargetUri)
 		ext.Component.Set(sendMetaSpan, "contentWriterClient")
 
 		metaRequest := &contentwriter.WriteRequest{
-			Value: rc.Meta,
+			Value: cs.Meta,
 		}
 
 		err = cwc.Send(metaRequest)

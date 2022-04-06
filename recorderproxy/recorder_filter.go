@@ -18,66 +18,61 @@ package recorderproxy
 
 import (
 	"bytes"
-	"github.com/getlantern/proxy/filters"
 	"github.com/golang/protobuf/ptypes"
 	"github.com/nlnwa/veidemann-api/go/contentwriter/v1"
 	dnsresolverV1 "github.com/nlnwa/veidemann-api/go/dnsresolver/v1"
 	"github.com/nlnwa/veidemann-recorderproxy/constants"
-	context2 "github.com/nlnwa/veidemann-recorderproxy/context"
 	"github.com/nlnwa/veidemann-recorderproxy/errors"
+	"github.com/nlnwa/veidemann-recorderproxy/filters"
 	"github.com/opentracing/opentracing-go"
 	"github.com/opentracing/opentracing-go/log"
 	"net/http"
 	"strings"
 )
 
-// RecorderFilter is a filter which returns an error if the proxy is accessed as if it where a web server and not a proxy.
+// RecorderFilter is a filter which ... TODO
 type RecorderFilter struct {
 	proxyId           int32
 	DnsResolverClient dnsresolverV1.DnsResolverClient
 	hasNextProxy      bool
 }
 
-func (f *RecorderFilter) Apply(ctx filters.Context, req *http.Request, next filters.Next) (resp *http.Response, context filters.Context, err error) {
-	l := context2.LogWithContextAndRequest(ctx, req, "FLT:rec")
-	connectErr := context2.GetConnectError(ctx)
-	if connectErr != nil {
-		resp, context, err = next(ctx, req)
-		return
+func (f *RecorderFilter) Apply(cs *filters.ConnectionState, req *http.Request, next filters.Next) (resp *http.Response, state *filters.ConnectionState, err error) {
+	l := cs.LogWithContextAndRequest(req, "FLT:rec")
+	if cs.ConnectErr != nil {
+		return next(cs, req)
 	}
 
 	if req.Method == http.MethodConnect {
 		// Handle HTTPS CONNECT
-		resp, context, err = next(ctx, req)
+		resp, state, err = next(cs, req)
 		if err != nil {
 			l.WithError(err).Infof("Could not CONNECT to upstream server: %v", req.Host)
 		}
-		resp, ctx, err = filters.ShortCircuit(ctx, req, &http.Response{
+		resp, state, err = filters.ShortCircuit(state, req, &http.Response{
 			StatusCode: http.StatusOK,
 		})
 	} else {
-		rc := context2.GetRecordContext(ctx)
-		span := opentracing.SpanFromContext(ctx)
+		span := opentracing.SpanFromContext(req.Context())
 
 		span.LogFields(log.String("event", "rec upstream request"))
 
-		req, err = f.filterRequest(ctx, span, req, rc)
+		req, err = f.filterRequest(cs, span, req)
 		if err != nil {
-			return handleRequestError(ctx, req, err)
+			return handleRequestError(cs, req, err)
 		}
 
-		context = ctx
-		roundTripSpan, roundtripCtx := opentracing.StartSpanFromContext(ctx, "Roundtrip upstream")
-		resp, roundtripCtx, err = next(context2.WrapIfNecessary(roundtripCtx), req)
+		roundTripSpan, _ := opentracing.StartSpanFromContext(req.Context(), "Roundtrip upstream")
+		resp, state, err = next(cs, req)
 		roundTripSpan.Finish()
 
 		if err != nil {
 			return
 		}
 
-		resp, err = f.filterResponse(ctx, span, resp, rc)
+		resp, err = f.filterResponse(state, span, resp)
 		if err != nil {
-			return handleRequestError(ctx, req, err)
+			return handleRequestError(state, req, err)
 		}
 
 		span.LogFields(log.String("event", "rec upstream response"))
@@ -85,7 +80,7 @@ func (f *RecorderFilter) Apply(ctx filters.Context, req *http.Request, next filt
 	return
 }
 
-func (f *RecorderFilter) filterRequest(c filters.Context, span opentracing.Span, req *http.Request, rc *context2.RecordContext) (*http.Request, error) {
+func (f *RecorderFilter) filterRequest(c *filters.ConnectionState, span opentracing.Span, req *http.Request) (*http.Request, error) {
 	span.LogKV("event", "StartFilterRequest")
 
 	var prolog bytes.Buffer
@@ -95,25 +90,25 @@ func (f *RecorderFilter) filterRequest(c filters.Context, span opentracing.Span,
 		return req, e
 	}
 
-	fetchTimeStamp, _ := ptypes.TimestampProto(rc.FetchTimesTamp)
-	uri := rc.Uri
+	fetchTimeStamp, _ := ptypes.TimestampProto(c.FetchTimesTamp)
+	uri := c.Uri
 
 	req.Header.Set(constants.HeaderAcceptEncoding, "identity")
-	req.Header.Set(constants.HeaderCrawlExecutionId, context2.GetCrawlExecutionId(c))
-	req.Header.Set(constants.HeaderJobExecutionId, context2.GetJobExecutionId(c))
+	req.Header.Set(constants.HeaderCrawlExecutionId, c.CrawlExecId)
+	req.Header.Set(constants.HeaderJobExecutionId, c.JobExecId)
 
-	rc.Meta = &contentwriter.WriteRequest_Meta{
+	c.Meta = &contentwriter.WriteRequest_Meta{
 		Meta: &contentwriter.WriteRequestMeta{
 			RecordMeta:     map[int32]*contentwriter.WriteRequestMeta_RecordMeta{},
 			TargetUri:      uri.String(),
-			ExecutionId:    context2.GetCrawlExecutionId(c),
-			IpAddress:      context2.GetIp(c),
-			CollectionRef:  context2.GetCollectionRef(c),
+			ExecutionId:    c.CrawlExecId,
+			IpAddress:      c.Ip,
+			CollectionRef:  c.CollectionRef,
 			FetchTimeStamp: fetchTimeStamp,
 		},
 	}
 
-	rc.CrawlLog.RequestedUri = uri.String()
+	c.CrawlLog.RequestedUri = uri.String()
 
 	contentType := req.Header.Get("Content-Type")
 	bodyWrapper, err := WrapRequestBody(c, req.Body, contentType, prolog.Bytes())
@@ -126,7 +121,7 @@ func (f *RecorderFilter) filterRequest(c filters.Context, span opentracing.Span,
 	return req, nil
 }
 
-func (f *RecorderFilter) filterResponse(c filters.Context, span opentracing.Span, respOrig *http.Response, rc *context2.RecordContext) (*http.Response, error) {
+func (f *RecorderFilter) filterResponse(c *filters.ConnectionState, span opentracing.Span, respOrig *http.Response) (*http.Response, error) {
 	span.LogKV("event", "StartFilterResponse")
 
 	resp := respOrig
@@ -134,14 +129,14 @@ func (f *RecorderFilter) filterResponse(c filters.Context, span opentracing.Span
 		panic(http.ErrAbortHandler)
 	}
 
-	if rc.Error != nil && strings.HasPrefix(rc.Error.Error(), "unknown error from browser controller") {
+	if c.Error != nil && strings.HasPrefix(c.Error.Error(), "unknown error from browser controller") {
 		return resp, nil
 	}
 
 	if isFromCache(resp) {
 		span.LogKV("event", "Loaded from cache")
-		context2.LogWithRecordContext(rc, "FLT:rec").Info("Loaded from cache")
-		rc.FoundInCache = true
+		c.LogWithContext("FLT:rec").Info("Loaded from cache")
+		c.FoundInCache = true
 	}
 
 	var prolog bytes.Buffer
@@ -159,9 +154,9 @@ func (f *RecorderFilter) filterResponse(c filters.Context, span opentracing.Span
 		return nil, e
 	}
 
-	if rc.ReplacementScript != nil {
-		context2.LogWithRecordContext(rc, "FLT:rec").Info("Replacement script")
-		resp.ContentLength = int64(len(rc.ReplacementScript.Script))
+	if c.ReplacementScript != nil {
+		c.LogWithContext("FLT:rec").Info("Replacement script")
+		resp.ContentLength = int64(len(c.ReplacementScript.Script))
 	}
 	resp.Body = bodyWrapper
 

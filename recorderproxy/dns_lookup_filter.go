@@ -18,10 +18,9 @@ package recorderproxy
 
 import (
 	"fmt"
-	"github.com/getlantern/proxy/filters"
 	dnsresolverV1 "github.com/nlnwa/veidemann-api/go/dnsresolver/v1"
-	context2 "github.com/nlnwa/veidemann-recorderproxy/context"
 	"github.com/nlnwa/veidemann-recorderproxy/errors"
+	"github.com/nlnwa/veidemann-recorderproxy/filters"
 	"github.com/opentracing/opentracing-go"
 	"google.golang.org/grpc/status"
 	"net/http"
@@ -33,38 +32,36 @@ type DnsLookupFilter struct {
 	DnsResolverClient dnsresolverV1.DnsResolverClient
 }
 
-func (f *DnsLookupFilter) Apply(ctx filters.Context, req *http.Request, next filters.Next) (resp *http.Response, context filters.Context, err error) {
-	l := context2.LogWithContextAndRequest(ctx, req, "FLT:dns")
+func (f *DnsLookupFilter) Apply(cs *filters.ConnectionState, req *http.Request, next filters.Next) (*http.Response, *filters.ConnectionState, error) {
+	l := cs.LogWithContextAndRequest(req, "FLT:dns")
 
-	ip := context2.GetIp(ctx)
-	host := context2.GetHost(ctx)
-	port := context2.GetPort(ctx)
-	if ip == "" && host != "" {
-		if e := f.resolve(ctx, host, port); e != nil {
-			return handleRequestError(ctx, req, e)
+	host := cs.Host
+	port := cs.Port
+	if cs.Ip == "" && host != "" {
+		if e := f.resolve(cs, req, host, port); e != nil {
+			return handleRequestError(cs, req, e)
 		}
-		l.Debugf("resolved '%v' to '%v'", host, ip)
+		l.Debugf("resolved '%v' to '%v'", host, cs.Ip)
 	}
-	resp, context, err = next(ctx, req)
-	return
+	return next(cs, req)
 }
 
-func (f *DnsLookupFilter) resolve(ctx filters.Context, host, port string) (err error) {
-	span, c := opentracing.StartSpanFromContext(ctx, "Resolve DNS")
-	dnsContext := context2.WrapIfNecessary(c)
+func (f *DnsLookupFilter) resolve(cs *filters.ConnectionState, req *http.Request, host, port string) error {
+	span, dnsContext := opentracing.StartSpanFromContext(req.Context(), "Resolve DNS")
+	//dnsContext := context2.WrapIfNecessary(c)
 	defer span.Finish()
 
 	var p = 0
 	if port != "" {
+		var err error
 		p, err = strconv.Atoi(port)
 		if err != nil {
-			err = errors.Wrap(err, errors.DomainLookupFailed, "illegal port", port)
-			return
+			return errors.Wrap(err, errors.DomainLookupFailed, "illegal port", port)
 		}
 	}
 	dnsReq := &dnsresolverV1.ResolveRequest{
-		ExecutionId:   context2.GetCrawlExecutionId(ctx),
-		CollectionRef: context2.GetCollectionRef(ctx),
+		ExecutionId:   cs.CrawlExecId,
+		CollectionRef: cs.CollectionRef,
 		Host:          host,
 		Port:          int32(p),
 	}
@@ -72,10 +69,9 @@ func (f *DnsLookupFilter) resolve(ctx filters.Context, host, port string) (err e
 	dnsResp, err := f.DnsResolverClient.Resolve(dnsContext, dnsReq)
 	s := status.Convert(err)
 	if err != nil {
-		err = errors.Wrap(err, errors.DomainLookupFailed, fmt.Sprintf("Got 'no such host' from DNS for host: %s, port: %s", host, port), s.Message())
-		return
+		return errors.Wrap(err, errors.DomainLookupFailed, fmt.Sprintf("Got 'no such host' from DNS for host: %s, port: %s", host, port), s.Message())
 	}
 
-	context2.SetIp(ctx, dnsResp.TextualIp)
-	return
+	cs.Ip = dnsResp.TextualIp
+	return nil
 }

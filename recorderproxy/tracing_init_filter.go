@@ -17,7 +17,7 @@
 package recorderproxy
 
 import (
-	"github.com/getlantern/proxy/filters"
+	"github.com/nlnwa/veidemann-recorderproxy/filters"
 	"github.com/opentracing/opentracing-go"
 	"github.com/opentracing/opentracing-go/ext"
 	"net/http"
@@ -26,9 +26,9 @@ import (
 // TracingInitFilter is a filter which initializes the context with tracing.
 type TracingInitFilter struct{}
 
-func (f *TracingInitFilter) Apply(ctx filters.Context, req *http.Request, next filters.Next) (resp *http.Response, context filters.Context, err error) {
+func (f *TracingInitFilter) Apply(cs *filters.ConnectionState, req *http.Request, next filters.Next) (*http.Response, *filters.ConnectionState, error) {
 	if req.Method == http.MethodConnect {
-		resp, context, err = next(ctx, req)
+		return next(cs, req)
 	} else {
 		tr := opentracing.GlobalTracer()
 		spanCtx, _ := tr.Extract(opentracing.HTTPHeaders, opentracing.HTTPHeadersCarrier(req.Header))
@@ -39,12 +39,11 @@ func (f *TracingInitFilter) Apply(ctx filters.Context, req *http.Request, next f
 		componentName := "recorderProxy"
 		ext.Component.Set(span, componentName)
 
+		ctx := req.Context()
 		c := opentracing.ContextWithSpan(ctx, span)
-		ctx = filters.AdaptContext(c)
-		req = req.WithContext(ctx)
+		req = req.WithContext(c)
 		defer span.Finish()
 
-		resp, context, err = next(ctx, req)
+		return next(cs, req)
 	}
-	return
 }

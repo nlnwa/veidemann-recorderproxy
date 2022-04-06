@@ -19,11 +19,10 @@ package recorderproxy
 import (
 	"crypto/sha1"
 	"fmt"
-	"github.com/getlantern/proxy/filters"
 	"github.com/nlnwa/veidemann-api/go/contentwriter/v1"
 	"github.com/nlnwa/veidemann-recorderproxy/constants"
-	"github.com/nlnwa/veidemann-recorderproxy/context"
 	"github.com/nlnwa/veidemann-recorderproxy/errors"
+	"github.com/nlnwa/veidemann-recorderproxy/filters"
 	"github.com/nlnwa/veidemann-recorderproxy/logger"
 	"hash"
 	"io"
@@ -33,18 +32,17 @@ import (
 
 // handleRequestError creates a short circuit response for requests that fail before or in request handling.
 // Only CrawlLog is sent, nothing is written to content writer.
-func handleRequestError(ctx filters.Context, req *http.Request, reqErr error) (*http.Response, filters.Context, error) {
-	l := context.LogWithContextAndRequest(ctx, req, "REQH")
+func handleRequestError(cs *filters.ConnectionState, req *http.Request, reqErr error) (*http.Response, *filters.ConnectionState, error) {
+	l := cs.LogWithContextAndRequest(req, "REQH")
 	l.WithError(reqErr).Debug("handling request error")
-	rc := context.GetRecordContext(ctx)
-	e := rc.SendRequestError(ctx, reqErr)
-	_ = rc.CancelContentWriter(errors.Detail(e))
-	return errorResponse(ctx, req, e)
+	e := cs.SendRequestError(reqErr)
+	_ = cs.CancelContentWriter(errors.Detail(e))
+	return errorResponse(cs, req, e)
 }
 
 // errorResponse creates a response from an error and populates Veidemann specific headers
-func errorResponse(ctx filters.Context, req *http.Request, err error) (*http.Response, filters.Context, error) {
-	resp, c, err := filters.Fail(ctx, req, errors.HttpStatusCode(err), err)
+func errorResponse(cs *filters.ConnectionState, req *http.Request, err error) (*http.Response, *filters.ConnectionState, error) {
+	resp, c, err := filters.Fail(cs, req, errors.HttpStatusCode(err), err)
 	resp.Header.Add(constants.HeaderProxyErrorCode, errors.Code(err).String())
 	resp.Header.Add(constants.HeaderProxyError, errors.Message(err))
 	return resp, c, err
@@ -52,25 +50,23 @@ func errorResponse(ctx filters.Context, req *http.Request, err error) (*http.Res
 
 type wrappedRequestBody struct {
 	io.ReadCloser
-	ctx           filters.Context
-	recordContext *context.RecordContext
-	recNum        int32
-	size          int64
-	blockCrc      hash.Hash
-	recordMeta    *contentwriter.WriteRequestMeta_RecordMeta
-	mutex         sync.Mutex
-	eof           bool
+	cs         *filters.ConnectionState
+	recNum     int32
+	size       int64
+	blockCrc   hash.Hash
+	recordMeta *contentwriter.WriteRequestMeta_RecordMeta
+	mutex      sync.Mutex
+	eof        bool
 }
 
-func WrapRequestBody(ctx filters.Context, body io.ReadCloser, contentType string,
+func WrapRequestBody(cs *filters.ConnectionState, body io.ReadCloser, contentType string,
 	prolog []byte) (*wrappedRequestBody, error) {
 
 	b := &wrappedRequestBody{
-		ReadCloser:    body,
-		ctx:           ctx,
-		recordContext: context.GetRecordContext(ctx),
-		recNum:        0,
-		blockCrc:      sha1.New(),
+		ReadCloser: body,
+		cs:         cs,
+		recNum:     0,
+		blockCrc:   sha1.New(),
 	}
 
 	b.recordMeta = &contentwriter.WriteRequestMeta_RecordMeta{
@@ -78,14 +74,14 @@ func WrapRequestBody(ctx filters.Context, body io.ReadCloser, contentType string
 		Type:      contentwriter.RecordType_REQUEST,
 	}
 	b.recordMeta.RecordContentType = constants.RecordContentTypeRequest
-	b.recordContext.Meta.Meta.RecordMeta[b.recNum] = b.recordMeta
-	b.recordContext.CrawlLog.StatusCode = -1
-	b.recordContext.CrawlLog.ContentType = contentType
+	b.cs.Meta.Meta.RecordMeta[b.recNum] = b.recordMeta
+	b.cs.CrawlLog.StatusCode = -1
+	b.cs.CrawlLog.ContentType = contentType
 
 	b.size = int64(len(prolog))
 	b.blockCrc.Write(prolog)
 
-	err := b.recordContext.SendProtocolHeader(b.recNum, prolog)
+	err := b.cs.SendProtocolHeader(b.recNum, prolog)
 	if err != nil {
 		return nil, fmt.Errorf("error writing payload to content writer: %v", err)
 	}
@@ -112,7 +108,7 @@ func (b *wrappedRequestBody) Read(p []byte) (n int, err error) {
 		b.size += int64(n)
 		d := p[:n]
 		b.writeCrc(d)
-		err2 := b.recordContext.SendPayload(b.recNum, d)
+		err2 := b.cs.SendPayload(b.recNum, d)
 		if err2 != nil {
 			logger.Log.Errorf("Error writing payload: %v", err2)
 		}

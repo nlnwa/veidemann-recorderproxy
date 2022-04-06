@@ -20,11 +20,10 @@ import (
 	"context"
 	"crypto/tls"
 	"github.com/getlantern/mitm"
-	"github.com/getlantern/proxy"
-	"github.com/getlantern/proxy/filters"
-	context2 "github.com/nlnwa/veidemann-recorderproxy/context"
 	"github.com/nlnwa/veidemann-recorderproxy/errors"
+	"github.com/nlnwa/veidemann-recorderproxy/filters"
 	"github.com/nlnwa/veidemann-recorderproxy/logger"
+	"github.com/nlnwa/veidemann-recorderproxy/proxy"
 	"github.com/nlnwa/veidemann-recorderproxy/serviceconnections"
 	"github.com/opentracing/opentracing-go"
 	"github.com/opentracing/opentracing-go/ext"
@@ -94,35 +93,38 @@ func NewRecorderProxy(id int, addr string, port int, conn *serviceconnections.Co
 			Organization:    "Veidemann Recorder Proxy",
 			CertFile:        "/tmp/rpcert.pem",
 		},
-		OnError: func(ctx filters.Context, req *http.Request, read bool, err error) *http.Response {
+		OnError: func(cs *filters.ConnectionState, req *http.Request, read bool, err error) *http.Response {
 			log.WithError(err).Error("Probably bug. Error handled by OnError should have been handled elsewhere.")
-			res, _, _ := filters.Fail(ctx, req, 500, err)
+			res, _, _ := filters.Fail(cs, req, 500, err)
 			return res
 		},
 		OKWaitsForUpstream:  false,
 		OKSendsServerTiming: false,
-		WriteResponseInterceptor: func(ctx filters.Context, downstream io.Writer, req *http.Request, resp *http.Response, invoker proxy.WriteResponseInvoker) error {
-			roundTripSpan, _ := opentracing.StartSpanFromContext(ctx, "Write downstream")
+		WriteResponseInterceptor: func(cs *filters.ConnectionState, downstream io.Writer, req *http.Request, resp *http.Response, invoker proxy.WriteResponseInvoker) error {
+			roundTripSpan, _ := opentracing.StartSpanFromContext(req.Context(), "Write downstream")
 			ext.HTTPUrl.Set(roundTripSpan, req.URL.String())
 			ext.HTTPMethod.Set(roundTripSpan, req.Method)
 			ext.HTTPStatusCode.Set(roundTripSpan, uint16(resp.StatusCode))
 			ext.SpanKind.Set(roundTripSpan, ext.SpanKindRPCServerEnum)
-			err := invoker(ctx, downstream, req, resp)
+			err := invoker(cs, downstream, req, resp)
 			roundTripSpan.Finish()
 
-			rc := context2.GetRecordContext(ctx)
-			if rc != nil {
-				rc.ResponseCompleted(resp, err)
-				rc.WaitForCompleted()
+			//rc := context2.GetRecordContext(ctx)
+			//if rc != nil {
+			if cs.CrawlLog != nil {
+				cs.ResponseCompleted(resp, err)
+				cs.WaitForCompleted()
 			}
+			//}
 			return err
 		},
+		Conn: conn,
 	}
 
-	proxyOpts.InitMITM = func() (interceptor proxy.MITMInterceptor, e error) {
-		i, e := mitm.Configure(proxyOpts.MITMOpts)
-		return &errorForwardingMITMInterceptor{i}, e
-	}
+	//proxyOpts.InitMITM = func() (interceptor proxy.MITMInterceptor, e error) {
+	//	i, e := mitm.Configure(proxyOpts.MITMOpts)
+	//	return &errorForwardingMITMInterceptor{i}, e
+	//}
 
 	var err error
 	r.Proxy, err = proxy.New(proxyOpts)
@@ -149,18 +151,19 @@ func NewRecorderProxy(id int, addr string, port int, conn *serviceconnections.Co
 	return r
 }
 
-type errorForwardingMITMInterceptor struct {
-	*mitm.Interceptor
-}
-
-func (e *errorForwardingMITMInterceptor) MITM(ctx context.Context, downstream net.Conn, upstream net.Conn) (newDown net.Conn, newUp net.Conn, success bool, err error) {
-	newDown, newUp, success, err = e.Interceptor.MITM(downstream, upstream)
-	if err != nil {
-		context2.SetConnectErrorIfNotExists(ctx, err)
-		err = nil
-	}
-	return
-}
+//
+//type errorForwardingMITMInterceptor struct {
+//	*mitm.Interceptor
+//}
+//
+//func (e *errorForwardingMITMInterceptor) MITM(cs *filters.ConnectionState, downstream net.Conn, upstream net.Conn) (newDown net.Conn, newUp net.Conn, success bool, err error) {
+//	newDown, newUp, success, err = e.Interceptor.MITM(downstream, upstream)
+//	if err != nil && cs.ConnectErr == nil {
+//		cs.ConnectErr = err
+//		err = nil
+//	}
+//	return
+//}
 
 func (proxy *RecorderProxy) Start() {
 	l := log.WithField("component", "PROXY")
@@ -174,7 +177,7 @@ func (proxy *RecorderProxy) Start() {
 			}
 
 			conn := WrapConn(co, "down", false)
-			c, cancel := context.WithCancel(context2.RecordProxyDataAware(context.Background()))
+			c, cancel := context.WithCancel(context.Background())
 
 			conn.CancelFunc = cancel
 			go func() {
@@ -200,7 +203,7 @@ func (proxy *RecorderProxy) Close() {
 	proxy.shouldRun = false
 	var lo int64
 	for {
-		openSessions := context2.OpenSessions()
+		openSessions := filters.OpenSessions()
 		if openSessions > 0 {
 			if openSessions != lo {
 				l.Infof("Waiting for %d sessions to complete", openSessions)

@@ -20,11 +20,10 @@ import (
 	"bytes"
 	"crypto/sha1"
 	"fmt"
-	"github.com/getlantern/proxy/filters"
 	"github.com/nlnwa/veidemann-api/go/contentwriter/v1"
 	"github.com/nlnwa/veidemann-recorderproxy/constants"
-	"github.com/nlnwa/veidemann-recorderproxy/context"
 	"github.com/nlnwa/veidemann-recorderproxy/errors"
+	"github.com/nlnwa/veidemann-recorderproxy/filters"
 	"github.com/nlnwa/veidemann-recorderproxy/logger"
 	"hash"
 	"io"
@@ -34,8 +33,7 @@ import (
 
 type wrappedResponseBody struct {
 	io.ReadCloser
-	ctx               filters.Context
-	recordContext     *context.RecordContext
+	cs                *filters.ConnectionState
 	recNum            int32
 	size              int64
 	blockCrc          hash.Hash
@@ -47,32 +45,31 @@ type wrappedResponseBody struct {
 	log               *logger.Logger
 }
 
-func WrapResponseBody(ctx filters.Context, body io.ReadCloser, statusCode int32, contentType string,
+func WrapResponseBody(cs *filters.ConnectionState, body io.ReadCloser, statusCode int32, contentType string,
 	recordType contentwriter.RecordType, prolog []byte) (*wrappedResponseBody, error) {
 
 	b := &wrappedResponseBody{
-		ReadCloser:    body,
-		ctx:           ctx,
-		recordContext: context.GetRecordContext(ctx),
-		recNum:        1,
-		blockCrc:      sha1.New(),
+		ReadCloser: body,
+		cs:         cs,
+		recNum:     1,
+		blockCrc:   sha1.New(),
 	}
-	b.log = context.LogWithContext(ctx, "BODY:resp").WithField("url", b.recordContext.Uri.String())
+	b.log = cs.LogWithContext("BODY:resp").WithField("url", b.cs.Uri.String())
 
 	b.recordMeta = &contentwriter.WriteRequestMeta_RecordMeta{
 		RecordNum: b.recNum,
 		Type:      recordType,
 	}
 	b.recordMeta.RecordContentType = constants.RecordContentTypeResponse
-	b.recordContext.Meta.Meta.RecordMeta[b.recNum] = b.recordMeta
-	b.recordContext.CrawlLog.StatusCode = statusCode
-	b.recordContext.CrawlLog.ContentType = contentType
+	b.cs.Meta.Meta.RecordMeta[b.recNum] = b.recordMeta
+	b.cs.CrawlLog.StatusCode = statusCode
+	b.cs.CrawlLog.ContentType = contentType
 
 	b.size = int64(len(prolog))
 	b.blockCrc.Write(prolog)
 
-	if !b.recordContext.FoundInCache {
-		err := b.recordContext.SendProtocolHeader(b.recNum, prolog)
+	if !b.cs.FoundInCache {
+		err := b.cs.SendProtocolHeader(b.recNum, prolog)
 		if err != nil {
 			return nil, fmt.Errorf("error writing payload to content writer: %v", err)
 		}
@@ -91,7 +88,7 @@ func (b *wrappedResponseBody) Read(p []byte) (n int, err error) {
 	b.mutex.Lock()
 	defer b.mutex.Unlock()
 
-	if b.recordContext.ReplacementScript == nil {
+	if b.cs.ReplacementScript == nil {
 		// Send original content to client
 		return b.innerRead(b.ReadCloser, p)
 	} else {
@@ -107,7 +104,7 @@ func (b *wrappedResponseBody) Read(p []byte) (n int, err error) {
 					return 0, err
 				}
 			}
-			b.replacementReader = bytes.NewReader([]byte(b.recordContext.ReplacementScript.Script))
+			b.replacementReader = bytes.NewReader([]byte(b.cs.ReplacementScript.Script))
 		}
 		n, err = b.replacementReader.Read(p)
 		return
@@ -128,13 +125,13 @@ func (b *wrappedResponseBody) innerRead(r io.Reader, p []byte) (n int, err error
 	}
 
 	if n > 0 {
-		if !b.recordContext.FoundInCache {
-			_ = b.recordContext.NotifyDataReceived()
+		if !b.cs.FoundInCache {
+			_ = b.cs.NotifyDataReceived()
 
 			b.size += int64(n)
 			d := p[:n]
 			b.writeCrc(d)
-			err2 := b.recordContext.SendPayload(b.recNum, d)
+			err2 := b.cs.SendPayload(b.recNum, d)
 			if err2 != nil {
 				b.log.WithError(err2).Errorf("Error writing payload")
 			}
@@ -142,27 +139,27 @@ func (b *wrappedResponseBody) innerRead(r io.Reader, p []byte) (n int, err error
 	}
 	if err == io.EOF {
 		b.eof = true
-		if b.recordContext.FoundInCache {
+		if b.cs.FoundInCache {
 			b.handleCachedContent()
 			return
 		}
 
-		_ = b.recordContext.NotifyAllDataReceived()
+		_ = b.cs.NotifyAllDataReceived()
 
 		blockDigest := fmt.Sprintf("sha1:%x", b.blockCrc.Sum(nil))
 		b.recordMeta.Size = b.size
 		b.recordMeta.BlockDigest = blockDigest
 
-		cwReply, err2 := b.recordContext.SendMeta()
+		cwReply, err2 := b.cs.SendMeta()
 		if err2 != nil {
-			err2 = b.recordContext.SendResponseError(b.ctx, errors.Wrap(err2, errors.RuntimeException, "Error writing to content writer", err2.Error()))
+			err2 = b.cs.SendResponseError(errors.Wrap(err2, errors.RuntimeException, "Error writing to content writer", err2.Error()))
 			return
 		}
 		if cwReply == nil {
 			return
 		}
 
-		cl := b.recordContext.CrawlLog
+		cl := b.cs.CrawlLog
 		cl.CollectionFinalName = cwReply.Meta.RecordMeta[b.recNum].CollectionFinalName
 		cl.WarcId = cwReply.Meta.RecordMeta[b.recNum].WarcId
 		cl.StorageRef = cwReply.Meta.RecordMeta[b.recNum].StorageRef
@@ -172,7 +169,7 @@ func (b *wrappedResponseBody) innerRead(r io.Reader, p []byte) (n int, err error
 		cl.BlockDigest = blockDigest
 		cl.PayloadDigest = cwReply.Meta.RecordMeta[b.recNum].PayloadDigest
 
-		err3 := b.recordContext.SaveCrawlLog()
+		err3 := b.cs.SaveCrawlLog()
 		if err3 != nil {
 			b.log.WithError(err3).Errorf("Error saving crawllog")
 		}
@@ -194,9 +191,9 @@ func (b *wrappedResponseBody) writeCrc(d []byte) error {
 }
 
 func (b *wrappedResponseBody) handleCachedContent() {
-	cl := b.recordContext.CrawlLog
+	cl := b.cs.CrawlLog
 	cl.Size = b.size
 
-	_ = b.recordContext.SaveCrawlLog()
-	_ = b.recordContext.CancelContentWriter("OK: Loaded from cache")
+	_ = b.cs.SaveCrawlLog()
+	_ = b.cs.CancelContentWriter("OK: Loaded from cache")
 }
