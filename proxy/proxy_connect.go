@@ -178,35 +178,34 @@ func (proxy *proxy) proceedWithConnect(
 		proxy.mitmLock.RLock()
 		defer proxy.mitmLock.RUnlock()
 		// Try to MITM the connection
-		downstreamMITM, upstreamMITM, mitming, err := proxy.mitmIC.MITM(cs, downstream, upstream)
-		if err != nil {
-			return log.Errorf("Unable to MITM connection: %v", err)
+		downstreamMITM, upstreamMITM, err := proxy.mitmIC.MITM(downstream, upstream)
+		if err != nil && cs.ConnectErr == nil {
+			cs.ConnectErr = err
+			err = nil
+			log.Errorf("Unable to MITM connection: %v", err)
 		}
 		downstream = downstreamMITM
 		upstream = upstreamMITM
-		if mitming {
-			// Try to read HTTP request and process as HTTP assuming that requests
-			// (not including body) are always smaller than 65K. If this assumption is
-			// violated, we won't be able to process the data on this connection.
-			downstreamRR := reconn.Wrap(downstream, maxHTTPSize)
-			_, peekReqErr := http.ReadRequest(bufio.NewReader(downstreamRR))
-			var rrErr error
-			rr, rrErr = downstreamRR.Rereader()
-			if rrErr != nil {
-				// Reading request overflowed, abort
-				return log.Errorf("Unable to re-read data: %v", rrErr)
-			}
-			if peekReqErr == nil {
-				// Handle as HTTP, prepend already read HTTP request
-				fullDownstream := io.MultiReader(rr, downstream)
-				// Remove upstream info from context so that handle doesn't try to
-				// process this as a CONNECT
-				cs.ClearUpstream()
-				cs.SetMITMing(true)
-				return proxy.handle(dialCtx, cs, fullDownstream, downstream, upstream, respondOK)
-			}
 
-			// We couldn't read the first HTTP Request, fall back to piping data
+		// Try to read HTTP request and process as HTTP assuming that requests
+		// (not including body) are always smaller than 65K. If this assumption is
+		// violated, we won't be able to process the data on this connection.
+		downstreamRR := reconn.Wrap(downstream, maxHTTPSize)
+		_, peekReqErr := http.ReadRequest(bufio.NewReader(downstreamRR))
+		var rrErr error
+		rr, rrErr = downstreamRR.Rereader()
+		if rrErr != nil {
+			// Reading request overflowed, abort
+			return log.Errorf("Unable to re-read data: %v", rrErr)
+		}
+		if peekReqErr == nil {
+			// Handle as HTTP, prepend already read HTTP request
+			fullDownstream := io.MultiReader(rr, downstream)
+			// Remove upstream info from context so that handle doesn't try to
+			// process this as a CONNECT
+			cs.ClearUpstream()
+			cs.SetMITMing(true)
+			return proxy.handle(dialCtx, cs, fullDownstream, downstream, upstream, respondOK)
 		}
 	}
 

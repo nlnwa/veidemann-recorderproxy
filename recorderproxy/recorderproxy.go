@@ -19,10 +19,10 @@ package recorderproxy
 import (
 	"context"
 	"crypto/tls"
-	"github.com/getlantern/mitm"
 	"github.com/nlnwa/veidemann-recorderproxy/errors"
 	"github.com/nlnwa/veidemann-recorderproxy/filters"
 	"github.com/nlnwa/veidemann-recorderproxy/logger"
+	"github.com/nlnwa/veidemann-recorderproxy/mitm"
 	"github.com/nlnwa/veidemann-recorderproxy/proxy"
 	"github.com/nlnwa/veidemann-recorderproxy/serviceconnections"
 	"github.com/opentracing/opentracing-go"

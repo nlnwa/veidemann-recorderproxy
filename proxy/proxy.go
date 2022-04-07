@@ -3,6 +3,7 @@ package proxy
 import (
 	"context"
 	"fmt"
+	"github.com/nlnwa/veidemann-recorderproxy/mitm"
 	"github.com/nlnwa/veidemann-recorderproxy/serviceconnections"
 	"io"
 	"net"
@@ -13,7 +14,6 @@ import (
 
 	"github.com/getlantern/errors"
 	"github.com/getlantern/golog"
-	"github.com/getlantern/mitm"
 	"github.com/nlnwa/veidemann-recorderproxy/filters"
 )
 
@@ -120,23 +120,15 @@ type Opts struct {
 	// contents isn't HTTP, the connection is handled as normal without MITM.
 	MITMOpts *mitm.Opts
 
-	// InitMITM is an optional function to initialize the MITM interceptor
-	InitMITM func() (MITMInterceptor, error)
-
 	// Optional function to intercept downstream writing of response
 	WriteResponseInterceptor WriteResponseInterceptorFunc
 
 	Conn *serviceconnections.Connections
 }
 
-type MITMInterceptor interface {
-	MITM(cs *filters.ConnectionState, downstream net.Conn, upstream net.Conn) (newDown net.Conn, newUp net.Conn, success bool, err error)
-}
-
 type proxy struct {
 	*Opts
-	//mitmIC *mitm.Interceptor
-	mitmIC      MITMInterceptor
+	mitmIC      *mitm.Interceptor
 	mitmDomains []*regexp.Regexp
 	mitmLock    sync.RWMutex
 }
@@ -167,9 +159,10 @@ func (proxy *proxy) ApplyMITMOptions(MITMOpts *mitm.Opts) (mitmErr error) {
 	defer proxy.mitmLock.Unlock()
 
 	if MITMOpts != nil {
-		//p.mitmIC, mitmErr = mitm.Configure(MITMOpts)
-		mitm, mitmErr := mitm.Configure(MITMOpts)
-		proxy.mitmIC = &errorForwardingMITMInterceptor{mitm}
+		proxy.mitmIC, mitmErr = mitm.Configure(MITMOpts)
+		//mitm, mitmErr := mitm.Configure(MITMOpts)
+		//proxy.mitmIC = &errorForwardingMITMInterceptor{mitm}
+		//proxy.mitmIC = mitm
 		if mitmErr != nil {
 			mitmErr = errors.New("Unable to configure MITM: %v", mitmErr)
 		} else {
@@ -205,15 +198,15 @@ func (opts *Opts) addIdleKeepAlive(header http.Header) {
 	}
 }
 
-type errorForwardingMITMInterceptor struct {
-	*mitm.Interceptor
-}
-
-func (e *errorForwardingMITMInterceptor) MITM(cs *filters.ConnectionState, downstream net.Conn, upstream net.Conn) (newDown net.Conn, newUp net.Conn, success bool, err error) {
-	newDown, newUp, success, err = e.Interceptor.MITM(downstream, upstream)
-	if err != nil && cs.ConnectErr == nil {
-		cs.ConnectErr = err
-	}
-	err = nil
-	return
-}
+//type errorForwardingMITMInterceptor struct {
+//	*mitm.Interceptor
+//}
+//
+//func (e *errorForwardingMITMInterceptor) MITM(cs *filters.ConnectionState, downstream net.Conn, upstream net.Conn) (newDown net.Conn, newUp net.Conn, success bool, err error) {
+//	newDown, newUp, success, err = e.Interceptor.MITM(downstream, upstream)
+//	if err != nil && cs.ConnectErr == nil {
+//		cs.ConnectErr = err
+//	}
+//	err = nil
+//	return
+//}
