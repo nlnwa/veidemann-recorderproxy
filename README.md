@@ -5,6 +5,7 @@
 
 # veidemann-recorderproxy
 
+### Proxy's communication with other components for one URL
 ```mermaid
 sequenceDiagram
     autonumber
@@ -14,8 +15,9 @@ sequenceDiagram
     participant ContentWriter
     participant Upstream
     Browser->>+Proxy: HTTP request
-    Proxy->>+BrowserController: New session
-    BrowserController->>Proxy: ID
+    Proxy->>BrowserController: Register New
+    activate BrowserController
+    BrowserController->>Proxy: Config
     Proxy->>+ContentWriter: HTTP request headers
     Proxy->>ContentWriter: HTTP request payload
     Proxy->>+Upstream: HTTP request
@@ -32,10 +34,12 @@ sequenceDiagram
         and
             Proxy->>ContentWriter: HTTP response payload
         end
+        Proxy->>BrowserController: Notify Activity [Data received]
     end
+    Proxy->>BrowserController: Notify Activity [All data received]
     Proxy->>ContentWriter: Metadata
     ContentWriter->>-Proxy: Metadata
-    Proxy->>BrowserController: CrawlLog
-    BrowserController->>-Proxy: x
+    Proxy->>BrowserController: Completed (CrawlLog)
+    deactivate BrowserController
     Proxy->>-Browser: HTTP response
 ```
