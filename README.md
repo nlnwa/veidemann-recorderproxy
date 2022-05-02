@@ -18,27 +18,32 @@ sequenceDiagram
     Proxy->>BrowserController: Register New
     activate BrowserController
     BrowserController->>Proxy: Config
-    Proxy->>+ContentWriter: HTTP request headers
-    Proxy->>ContentWriter: HTTP request payload
-    Proxy->>+Upstream: HTTP request
-    Upstream->>Proxy: HTTP response headers
-    par
-        Proxy->>ContentWriter: HTTP response headers
-    and
-        Proxy->>Browser: HTTP response headers
-    end
-    loop until all data received
-        Upstream->>-Proxy: HTTP response payload
-        par
-            Proxy->>Browser: HTTP response payload
-        and
-            Proxy->>ContentWriter: HTTP response payload
+    rect rgb(250,250,255)
+        Note over Proxy: Check the config to see if robots.txt allow us to crawl the URL
+        opt Allowed to crawl
+            Proxy->>+ContentWriter: HTTP request headers
+            Proxy->>ContentWriter: HTTP request payload
+            Proxy->>+Upstream: HTTP request
+            Upstream->>Proxy: HTTP response headers
+            par
+                Proxy->>ContentWriter: HTTP response headers
+            and
+                Proxy->>Browser: HTTP response headers
+            end
+            loop until all data received
+                Upstream->>-Proxy: HTTP response payload
+                par
+                    Proxy->>Browser: HTTP response payload
+                and
+                    Proxy->>ContentWriter: HTTP response payload
+                end
+                Proxy->>BrowserController: Notify Activity [Data received]
+            end
+            Proxy->>BrowserController: Notify Activity [All data received]
+            Proxy->>ContentWriter: Metadata
+            ContentWriter->>-Proxy: Metadata
         end
-        Proxy->>BrowserController: Notify Activity [Data received]
     end
-    Proxy->>BrowserController: Notify Activity [All data received]
-    Proxy->>ContentWriter: Metadata
-    ContentWriter->>-Proxy: Metadata
     Proxy->>BrowserController: Completed (CrawlLog)
     deactivate BrowserController
     Proxy->>-Browser: HTTP response
