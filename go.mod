@@ -22,7 +22,7 @@ require (
 	github.com/uber-go/atomic v1.4.0 // indirect
 	github.com/uber/jaeger-client-go v2.17.0+incompatible
 	github.com/uber/jaeger-lib v2.1.1+incompatible // indirect
-	golang.org/x/net v0.0.0-20201026091529-146b70c837a4
+	golang.org/x/net v0.17.0
 	google.golang.org/grpc v1.33.1
 	google.golang.org/protobuf v1.26.0
 	gopkg.in/check.v1 v1.0.0-20180628173108-788fd7840127 // indirect
